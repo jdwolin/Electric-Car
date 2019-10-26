@@ -57,9 +57,10 @@ byte data[8] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
 /**
  * variable for CAN
  */
-long unsigned int rxId;
-unsigned char len = 0;
-unsigned char rxBuf[8];
+
+INT32U rxId;
+INT8U len = 0;
+INT8U rxBuf[8];
 char msgString[128];  
 int temporary = 0;
 int lastvalue; // variable for button loop
@@ -108,7 +109,6 @@ void setup()
 {
 
 M5.begin();
-delay(500);
 
 Serial.begin(115200); 
   Serial2.begin(9600);
@@ -213,7 +213,7 @@ for(xx=1; xx <= 36;xx++){
   }
 
 
- // test_can();
+//test_can();
 //  M5.update();
 
 // delay (500);
@@ -221,14 +221,15 @@ for(xx=1; xx <= 36;xx++){
 
 //canbus loop code start
 unsigned char len = 0;
-unsigned char buf[8];
 //unsigned char CanStat;
 if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, read receive buffer
   {         // check if data coming 
-        CAN0.readMsgBuf(&rxId, &len, buf);    // read data,  len: data length, buf: data buf 
+        CAN0.readMsgBuf(&rxId, &len, rxBuf);    // read data,  len: data length, buf: data buf 
 
-        Serial.print("rxId=");
-        Serial.println(rxId,HEX);
+     //   Serial.print("rxId=");
+     //   Serial.println(rxId,HEX);
+        rxId = rxId & 0x1fffffff;
+  //      Serial.println(rxId, HEX);
         if(rxId == 0x18ff50e5)
         {
             Serial.println("***********************************");
@@ -236,38 +237,40 @@ if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, re
              Serial.println(rxId,HEX);
             for(int i = 0; i<len; i++)    // print the data
             {
-                Serial.print(buf[i], HEX);
+                Serial.print(rxBuf[i], HEX);
                 Serial.print("\t");
             }
             Serial.println();
-            volts = (buf[0]*256+buf[1])/10.0;
-            amps = (buf[2]*256+buf[3])/10.0;
+            volts = (rxBuf[0]*256+rxBuf[1])/10.0;
+            amps = (rxBuf[2]*256+rxBuf[3])/10.0;
             Serial.print("volts=");
             Serial.print(volts,1);Serial.print(" ");
             Serial.print("amps=");
             Serial.print(amps,1);Serial.print(" ");
             Serial.print("status=");
-            Serial.println(buf[4]);Serial.println();
+            Serial.println(rxBuf[4]);Serial.println();
         }
-        if(rxId == 0x1800e5f5)//0x1800e5f5
+        rxId = rxId & 0x1fffffff;
+  //      Serial.println(rxId, HEX);
+        if(rxId == 0x1800e5f5)//0x18ffe5f5
         {
             Serial.println("----------------------------------");
              Serial.print("Get data from DCDC ID: 0x");
              Serial.println(rxId,HEX);
             for(int i = 0; i<len; i++)    // print the data
             {
-                Serial.print(buf[i], HEX);
+                Serial.print(rxBuf[i], HEX);
                 Serial.print("\t");
             }
             Serial.println();
-            volts = (buf[5]*.2);
-            amps = (buf[4]*256+buf[3])/10.0;
+            volts = (rxBuf[5]*.2);
+            amps = (rxBuf[4]*256+rxBuf[3])/10.0;
             Serial.print("volts=");
             Serial.print(volts,1);Serial.print(" ");
             Serial.print("amps=");
             Serial.print(amps,1);Serial.print(" ");
             Serial.print("temperature=");
-            Serial.print(buf[7]-40);Serial.println("C");
+            Serial.print(rxBuf[7]-40);Serial.println("C");
         }
         if (millis() - startTime1 >= 1000) {
           startTime1 = millis();
@@ -584,7 +587,7 @@ void init_can(){
   M5.Lcd.printf("Receive first, then testing for sending function!\n");
 
   // Initialize MCP2515 running at 16MHz with a baudrate of 500kb/s and the masks and filters disabled.
-  if(CAN0.begin(MCP_ANY, CAN_500KBPS, MCP_16MHZ) == CAN_OK)
+  if(CAN0.begin(MCP_ANY, CAN_500KBPS, MCP_8MHZ) == CAN_OK)
     Serial.println("MCP2515 Initialized Successfully!");
   else
     Serial.println("Error Initializing MCP2515...");
@@ -598,3 +601,34 @@ void init_can(){
 }
 
 
+void test_can(){
+ // unsigned char buf[8];
+
+           //     Serial.print("made it here");
+  if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, read receive buffer
+  {
+           //   Serial.print("made it here");
+    CAN0.readMsgBuf(&rxId, &len, rxBuf);      // Read data: len = data length, buf = data byte(s)
+
+//rxId = 0x1800e5f5;
+
+        Serial.println(rxId, HEX);
+        Serial.println(len);
+    //    Serial.println(rxBuf);
+           if(rxId == 0x1800e5f5)//0x1800e5f5
+            {
+
+                Serial.println("----------------------------------");
+                 Serial.print("Get data from DCDC ID: 0x");
+                 Serial.println(rxId,HEX);
+                for(int i = 0; i<len; i++)    // print the data
+                {
+                    Serial.print(rxBuf[i], HEX);
+                    Serial.print("\t");
+                }
+            Serial.println();
+            
+  }
+}
+
+}

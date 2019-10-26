@@ -2,24 +2,15 @@
 #include <mcp_can.h>
 
 
-/**
- * variable for loop
- */
-
-byte data[8] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
-
-
-/**
- * variable for CAN
- */
 INT32U rxId;
 INT8U extflag = 1;
 INT8U len = 0;
 INT8U rxBuf[8];
 char msgString[128];                        // Array to store serial string
 
-#define CAN0_INT 2                              // Set INT to pin 2
-MCP_CAN CAN0(10); 
+
+#define CAN0_INT 15 // Set INT to pin 2
+MCP_CAN CAN0(12);   // Set CS to pin 10                             // Set CS to pin 10
 
 
 void init_can();
@@ -29,11 +20,11 @@ void setup() {
   M5.begin();
   Serial.begin(115200);
   Serial2.begin(115200, SERIAL_8N1, 16, 17);
-
+   pinMode(CAN0_INT, INPUT);  
   delay(500);
   M5.Lcd.setTextColor(BLACK);
   // M5.Lcd.setTextSize(1);
-
+  pinMode(CAN0_INT, INPUT);   
   init_can();
   Serial.println("Test CAN...");
 }
@@ -58,14 +49,14 @@ void init_can(){
   M5.Lcd.printf("Receive first, then testing for sending function!\n");
 
   // Initialize MCP2515 running at 16MHz with a baudrate of 500kb/s and the masks and filters disabled.
-  if(CAN0.begin(MCP_ANY, CAN_500KBPS, MCP_16MHZ) == CAN_OK)
+  if(CAN0.begin(MCP_ANY, CAN_500KBPS, MCP_8MHZ) == CAN_OK)
     Serial.println("MCP2515 Initialized Successfully!");
   else
     Serial.println("Error Initializing MCP2515...");
 
   CAN0.setMode(MCP_NORMAL);                     // Set operation mode to normal so the MCP2515 sends acks to received data.
 
-  pinMode(CAN0_INT, INPUT);                            // Configuring pin for /INT input
+                          // Configuring pin for /INT input
 
   Serial.println("MCP2515 Library Receive Example...");
 }
