@@ -1,13 +1,16 @@
+//arduino-cli compile --fqbn esp32:esp32:esp32 "C:\Users\Jason Wolin\Dropbox\Arduino\Electric_VW_Mothership" 
+//arduino-cli upload -p COM5 --fqbn esp32:esp32:esp32  "C:\Users\Jason Wolin\Dropbox\Arduino\Electric_VW_Mothership" 
+//"C:\Users\Jason Wolin\esptool\esptool.py" --port COM5 write_flash 0x10000 "C:/Users/Jason Wolin/Dropbox/Arduino/Electric_VW_Mothership/Electric_VW_Mothership.esp32.esp32.esp32.bin"
+//#include <WebOTA.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <M5Stack.h>
+#include <FastLED.h>
 #include "BluetoothSerial.h"
-#include <Wire.h>
-#include "mcp_can.h"
 
 // CANBUS INITIALIZATION START
 
-
+#include "mcp_can.h"
 #define CAN0_INT 15                              // Set INT to pin 2
 MCP_CAN CAN0(12);     // Set CS to pin 10
 #define BGS1_ID 0x1806E5F4 // BGS1 message code BGS1
@@ -20,18 +23,17 @@ unsigned int DwTimer=0, BGS1Timer=0, VcuTimer=0;
 // CANBUS INITIALZITION END
 
 
-// I2C stuff
-#define SLAVE_ADDRESS 0x60
-float CellVoltage; // for sending cell voltages to mothership
-
-// realdash init
+#define ONE_WIRE_BUS 4
+#define Neopixel_PIN    15
+#define NUM_LEDS    10
 const unsigned long serialBlockTag = 0x11223344;  // canbus definition for realdash
 unsigned long startTime1;  //timer
+
+
 
 BluetoothSerial SerialBT;
 
 // Arduino digital and analog pins
-
 
 unsigned int rpm = 0;
 unsigned int cell01volts = 0;
@@ -61,6 +63,11 @@ const char *testbank2 = "2";  // BMS Board Two String
 const char *testbank3 = "p";  // Temperature String
 
 char name_arr[32];
+
+CRGB leds[NUM_LEDS];
+uint8_t gHue = 0;
+static TaskHandle_t FastLEDshowTaskHandle = 0;
+static TaskHandle_t userTaskHandle = 0;
  
 
 void setup()
@@ -68,6 +75,7 @@ void setup()
 
   Serial.begin(115200); 
   Serial2.begin(9600);
+//  neopixelsetup;
 
 //canbus start setup
    startTime1 = millis();
@@ -81,23 +89,92 @@ void setup()
 
 //canbus end setup
 
- Wire.begin();
- //Wire.setClock(100000);
- Serial.println("I2C up and running... waiting for I2C communication");
+
+  FastLED.addLeds<WS2811,Neopixel_PIN,GRB>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  FastLED.setBrightness(10);
+  xTaskCreatePinnedToCore(FastLEDshowTask, "FastLEDshowTask", 2048, NULL, 2, NULL, 1);
 
   M5.begin();
   M5.Lcd.setTextColor(TFT_WHITE,TFT_BLACK);  
   M5.Lcd.setTextSize(1);
-  M5.Lcd.println(("VW Electric Initialization..."));
 
-  SerialBT.begin("ESP32"); //Bluetooth device name
+
+ // M5.Lcd.println(("VW Electric Initialization..."));
+
+
+  SerialBT.begin("ESP32test"); //Bluetooth device name
   if(!SerialBT.begin("ESP32")){
     Serial.println("An error occurred initializing Bluetooth");
     M5.Lcd.println(("An error occurred initializing Bluetooth"));
+
   }
 //  SerialBT.begin(9600);
   Serial.println("The device started, now you can pair it with bluetooth!");
   M5.Lcd.println(("Pair with bluetooth!"));
+
+
+
+if (strchr(testbank1, instring[3])){
+Serial.println("It's the first IC!");  
+  valPosition = strtok(instring, delimiters);
+for(int i = 0; i < 37; i++){
+    icbank1[i] = atof(valPosition);
+   // delay(100);
+    valPosition = strtok(NULL, delimiters);
+    Serial.println(i);
+    Serial.println(valPosition);
+}
+
+// simplify array
+int counter = 0;
+for(int i=2; i < 37; i=i+2){
+icbank1[counter] = icbank1[i];
+Serial.println(icbank1[counter],4);
+counter++;
+}
+}
+
+
+if (strchr(testbank2, instring1[3])){
+Serial.println("It's the second IC!");  
+valPosition = strtok(instring1, delimiters);
+for(int i = 0; i < 37; i++){
+    icbank2[i] = atof(valPosition);
+   // delay(100);
+    valPosition = strtok(NULL, delimiters);
+    Serial.println(i);
+    Serial.println(valPosition);
+}
+
+// simplify array
+int counter = 0;
+for(int i=2; i < 37; i=i+2){
+icbank2[counter] = icbank2[i];
+Serial.println(icbank2[counter],4);
+counter++;
+}
+}
+
+
+//temperature probes
+if (strchr(testbank3, tempstring[3])){
+Serial.println("It's the temp probes");  
+valPosition = strtok(tempstring, delimiters);
+for(int i = 0; i < 26; i++){
+    tempbank[i] = atof(valPosition);
+    valPosition = strtok(NULL, delimiters);
+    Serial.println(i);
+    Serial.println(valPosition);
+}
+
+// simplify array
+int counter = 0;
+for(int i=2; i < 26; i=i+2){
+tempbank[counter] = tempbank[i];
+Serial.println(tempbank[counter],4);
+counter++;
+}
+}
 
 }
 
@@ -155,7 +232,8 @@ void SendCanVCU_Cmd(unsigned int volts, unsigned int amps)
 
 void loop()
 {
- SendCANFramesToSerial();
+//    webota.handle();
+  SendCANFramesToSerial();
 
   if (screenfull == 30)
   {
@@ -164,16 +242,6 @@ void loop()
   screenfull = 0;
   }
   
-int xx;
- for(xx=1; xx <= 36;xx++){
-    CellVoltage=RequestVoltage(xx);
-    Serial.print("cell");
-    Serial.print(xx);
-    Serial.print(" voltage=");
-    Serial.println(CellVoltage,3);
-    delay(20);
-  }
-
     // just some dummy values for simulated engine parameters
   if (rpm++ > 6750)
   {
@@ -221,6 +289,7 @@ int xx;
   }
 
 //canbus loop code start
+
 unsigned char len = 0;
 unsigned char buf[8];
 unsigned char CanStat;
@@ -278,6 +347,10 @@ unsigned char CanStat;
         }
     }
 //canbus loop code end
+
+
+
+
 }
 
 
@@ -311,12 +384,11 @@ void SendCANFramesToSerial()
 
 int framepacket = 3202;
 
-  for (int i = 1; i < 37; i = i + 4) {
-    
-    float v1 = RequestVoltage(i) * 1000;
-    float v2 = RequestVoltage(i+1) * 1000;
-    float v3 = RequestVoltage(i+2) * 1000;
-    float v4 = RequestVoltage(i+3) * 1000;
+  for (int i = 0; i < 16; i = i + 4) {
+    float v1 = icbank1[i] * 1000;
+    float v2 = icbank1[i + 1] * 1000;
+    float v3 = icbank1[i + 2] * 1000;
+    float v4 = icbank1[i + 3] * 1000;
     int voltage1 = (int) v1;
     int voltage2 = (int) v2;
     int voltage3 = (int) v3;
@@ -330,6 +402,46 @@ int framepacket = 3202;
     framepacket++;
 
   }
+
+
+  framepacket = 3206;
+    float v1 = icbank1[16] * 1000;
+    float v2 = icbank1[17] * 1000;
+    float v3 = icbank2[0] * 1000;
+    float v4 = icbank2[1] * 1000;
+    int voltage1 = (int) v1;
+    int voltage2 = (int) v2;
+    int voltage3 = (int) v3;
+    int voltage4 = (int) v4;
+    
+    memcpy(buf, & voltage1, 2);
+    memcpy(buf + 2, & voltage2, 2);
+    memcpy(buf + 4, & voltage3, 2);
+    memcpy(buf + 6, & voltage4, 2);
+   SendCANFrameToSerial(framepacket, buf);
+    
+
+framepacket = 3207;
+ for (int i = 2; i < 18; i = i + 4) {
+    float v1 = icbank2[i] * 1000;
+    float v2 = icbank2[i + 1] * 1000;
+    float v3 = icbank2[i + 2] * 1000;
+    float v4 = icbank2[i + 3] * 1000;
+    int voltage1 = (int) v1;
+    int voltage2 = (int) v2;
+    int voltage3 = (int) v3;
+    int voltage4 = (int) v4;
+    memcpy(buf, & voltage1, 2);
+    memcpy(buf + 2, & voltage2, 2);
+    memcpy(buf + 4, & voltage3, 2);
+    memcpy(buf + 6, & voltage4, 2);
+
+    SendCANFrameToSerial(framepacket, buf);
+    framepacket++;
+
+  }
+
+
 
 framepacket = 3211;
  for (int i = 0; i < 14; i = i + 4) {
@@ -348,7 +460,12 @@ framepacket = 3211;
 
     SendCANFrameToSerial(framepacket, buf);
     framepacket++;
+
   }
+
+
+
+
 }
 
 
@@ -367,33 +484,22 @@ void SendCANFrameToSerial(unsigned long canFrameId, const byte* frameData)
   SerialBT.write(frameData, 8);
 }
 
+void FastLEDshowESP32()
+{
+    if (userTaskHandle == 0) {
+        userTaskHandle = xTaskGetCurrentTaskHandle();
+        xTaskNotifyGive(FastLEDshowTaskHandle);
+        const TickType_t xMaxBlockTime = pdMS_TO_TICKS( 200 );
+        ulTaskNotifyTake(pdTRUE, xMaxBlockTime);
+        userTaskHandle = 0;
+    }
+}
 
-
-//***********************************************************************
-float RequestVoltage (int CellNumber){
-char MyString[10];
-unsigned int c;
-float f;
-int i;
-    Wire.beginTransmission(SLAVE_ADDRESS);
-    Wire.write("CV ");
-    itoa(CellNumber,MyString,10); // convert integer number to ascii characters
-    Wire.write(MyString);
-    Wire.write("\r");       // terminate with carriage return delimiter. This is what I will look for when parsing.
-    Wire.endTransmission();
-   Serial.print("Requesting Data...");
-    
-    if(CellNumber == 1) delay(100);//allow time for bms to get new voltage data
-    Wire.requestFrom(SLAVE_ADDRESS,8); // now request some data, up to 8 characters
-    i=0;
-    while (Wire.available()) { // counts down the REQUESTED character count
-      c = Wire.read();         // get character
-      if(c==255) break;        // still needed, break if default char is detected
- //   Serial.println(c, HEX);// print the character
-      MyString[i++] = c;       // build character string
-    }  
-
-    MyString[i]=0;      // add the NULL character for string conversion to float
-    f=atof(MyString);   // convert string to float
-    return f;           // return float value
+void FastLEDshowTask(void *pvParameters)
+{
+    for(;;) {
+        fill_solid(leds, NUM_LEDS, gHue);// rainbow effect
+        FastLED.show();// must be executed for neopixel becoming effective
+        EVERY_N_MILLISECONDS( 200 ) { gHue++; }
+    }
 }

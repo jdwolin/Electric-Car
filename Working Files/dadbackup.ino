@@ -90,7 +90,7 @@ void setup()
   M5.Lcd.setTextSize(1);
   M5.Lcd.println(("VW Electric Initialization..."));
 
-  SerialBT.begin("ESP32"); //Bluetooth device name
+  SerialBT.begin("ESP32test"); //Bluetooth device name
   if(!SerialBT.begin("ESP32")){
     Serial.println("An error occurred initializing Bluetooth");
     M5.Lcd.println(("An error occurred initializing Bluetooth"));
@@ -155,7 +155,7 @@ void SendCanVCU_Cmd(unsigned int volts, unsigned int amps)
 
 void loop()
 {
- SendCANFramesToSerial();
+//  SendCANFramesToSerial();
 
   if (screenfull == 30)
   {
