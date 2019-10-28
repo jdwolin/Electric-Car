@@ -24,6 +24,32 @@
 
 // define the number of bytes you want to access
 #define EEPROM_SIZE 512
+#define ONE_WIRE_BUS 26
+int temploop;
+int TemperatureTimer=0;
+
+DeviceAddress AddrList[12] = {
+      {0x28, 0xFF, 0xDF, 0x20, 0xB2, 0x17, 0x02, 0xC4}, // probe 1
+      {0x28, 0xFF, 0x81, 0x2B, 0xB2, 0x17, 0x02, 0x67}, // probe 2
+      {0x28, 0xFF, 0x9E, 0x68, 0xB2, 0x17, 0x01, 0xFE}, // probe 3
+      {0x28, 0xFF, 0xAF, 0x9D, 0xB2, 0x17, 0x02, 0xA5}, // probe 4
+      {0x28, 0xFF, 0x7C, 0x66, 0xB2, 0x17, 0x01, 0xB2}, // probe 5
+      {0x28, 0xFF, 0xD2, 0x6C, 0xC4, 0x17, 0x04, 0x39}, // probe 6
+      {0x28, 0xFF, 0x75, 0x59, 0xC4, 0x17, 0x05, 0xCC}, // probe 7
+      {0x28, 0xFF, 0xD1, 0x58, 0xC4, 0x17, 0x04, 0x31}, // probe 8
+      {0x28, 0xFF, 0x19, 0x7B, 0x90, 0x17, 0x05, 0x6E}, // probe 9
+      {0x28, 0xFF, 0x2D, 0x54, 0xB2, 0x17, 0x04, 0x9A}, // probe 10
+      {0x28, 0x24, 0x7E, 0x79, 0x97, 0x15, 0x03, 0x23}, // probe 11
+      {0x28, 0xD4, 0xBD, 0x79, 0x97, 0x15, 0x03, 0x3D}  // probe 12
+};
+
+
+// Setup a oneWire instance to communicate with any OneWire devices 
+// (not just Maxim/Dallas temperature ICs) 18B20
+OneWire oneWire(ONE_WIRE_BUS);
+ 
+// Pass our oneWire reference to Dallas Temperature.
+DallasTemperature sensors(&oneWire);
 
 // CANBUS INITIALIZATION START
 
@@ -33,7 +59,7 @@ MCP_CAN CAN0(12);     // Set CS to pin 10
 #define VCU_ID  0x1800F5E5 // VCU message code
 unsigned char stmp[8];
 unsigned int LoopCount=0;
-float volts, amps;
+float chargervoltshv, chargervoltslv, chargerampshv, chargerampslv, chargertemperature, bmstemperature, zillatemperature, ambienttemperature;
 unsigned int DwTimer=0, BGS1Timer=0, VcuTimer=0;
 
 // CANBUS INITIALZITION END
@@ -82,13 +108,13 @@ char tempstring[] = "Temp, T1:30.30, T2:45.00, T3:33.00, T4:23.00, T5:88.00, T6:
 char input;
 char delimiters[] = ",:";
 char* valPosition;
-float tempbank[] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 const char *testbank3 = "p";  // Temperature String
 char name_arr[32];
 
 // Arduino digital and analog pins
 unsigned int digitalPins = 0;
 unsigned int ButtonOutput[7] = {0};
+float TempPack[15] = {0};
 
 // incoming data
 byte incomingFrame[17] = { 0 };
@@ -118,6 +144,11 @@ Serial.begin(115200);
     ButtonOutput[2] = 0; // Charge On
     ButtonOutput[3] = 1; // Charge current
     ButtonOutput[4] = 0;
+
+ sensors.setWaitForConversion(0); // don't wait for temperature conversion to complete
+  // Start up the library
+  sensors.begin();
+  sensors.setResolution(11); 
    
 EEPROM.begin(EEPROM_SIZE);
   // init serial
@@ -161,26 +192,21 @@ Serial.println("CAN BUS Shield init");
 }
 
 
-
-
 void loop()
 {
-  priority++;
-
-if(ButtonOutput[1] != lastvalue)
+priority++;
+if(ButtonOutput[1] != lastvalue) // SetBMSLimit when variable changes.
 {
 lastvalue = ButtonOutput[1];
 SetBMSLimit(ButtonOutput[1]);
 }
 
-
-
 if(priority == 8000){  //  counter so that certain functions like temperature and BMS voltages don't hog the loop (updated only every so often not every cycle of the loop)
     priority = 0;
   }
 
-  SendCANFramesToSerial();
-  ReadIncomingSerialData();
+SendCANFramesToSerial();
+ReadIncomingSerialData();
 
 if(priority == 200){   // time to update 
 int xx;
@@ -192,7 +218,12 @@ for(xx=1; xx <= 36;xx++){
     Serial.println(CellVoltage,3);
     delay(20);
 }
+
+gettemperatures();
+
 }
+
+readcharger();
 
   // just some dummy values for simulated engine parameters
   if (rpm++ > 10000)
@@ -212,75 +243,6 @@ for(xx=1; xx <= 36;xx++){
     clt = 0;
   }
 
-
-//test_can();
-//  M5.update();
-
-// delay (500);
-
-
-//canbus loop code start
-unsigned char len = 0;
-//unsigned char CanStat;
-if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, read receive buffer
-  {         // check if data coming 
-        CAN0.readMsgBuf(&rxId, &len, rxBuf);    // read data,  len: data length, buf: data buf 
-
-     //   Serial.print("rxId=");
-     //   Serial.println(rxId,HEX);
-        rxId = rxId & 0x1fffffff;
-  //      Serial.println(rxId, HEX);
-        if(rxId == 0x18ff50e5)
-        {
-            Serial.println("***********************************");
-             Serial.print("Get data from CCS1 ID: 0x");
-             Serial.println(rxId,HEX);
-            for(int i = 0; i<len; i++)    // print the data
-            {
-                Serial.print(rxBuf[i], HEX);
-                Serial.print("\t");
-            }
-            Serial.println();
-            volts = (rxBuf[0]*256+rxBuf[1])/10.0;
-            amps = (rxBuf[2]*256+rxBuf[3])/10.0;
-            Serial.print("volts=");
-            Serial.print(volts,1);Serial.print(" ");
-            Serial.print("amps=");
-            Serial.print(amps,1);Serial.print(" ");
-            Serial.print("status=");
-            Serial.println(rxBuf[4]);Serial.println();
-        }
-        rxId = rxId & 0x1fffffff;
-  //      Serial.println(rxId, HEX);
-        if(rxId == 0x1800e5f5)//0x18ffe5f5
-        {
-            Serial.println("----------------------------------");
-             Serial.print("Get data from DCDC ID: 0x");
-             Serial.println(rxId,HEX);
-            for(int i = 0; i<len; i++)    // print the data
-            {
-                Serial.print(rxBuf[i], HEX);
-                Serial.print("\t");
-            }
-            Serial.println();
-            volts = (rxBuf[5]*.2);
-            amps = (rxBuf[4]*256+rxBuf[3])/10.0;
-            Serial.print("volts=");
-            Serial.print(volts,1);Serial.print(" ");
-            Serial.print("amps=");
-            Serial.print(amps,1);Serial.print(" ");
-            Serial.print("temperature=");
-            Serial.print(rxBuf[7]-40);Serial.println("C");
-        }
-        if (millis() - startTime1 >= 1000) {
-          startTime1 = millis();
-          Serial.println("sending BGS1 command");
-          SendCanBGS1_Cmd(140,3); // 140 volts, 3 amps
-          Serial.println("sending VCU command");
-          SendCanVCU_Cmd(14,5);  // dc battery 14 volts, 5 amps
-        }
-    }
-//canbus loop code end
  
 }
 
@@ -305,6 +267,29 @@ void SendCANFramesToSerial()
   // write 3rd CAN frame to serial
   SendCANFrameToSerial(3100, buf);
 
+	float v1 = chargervoltshv * 100;
+	float v2 = chargervoltslv * 100;
+	float v3 = chargerampshv * 100;
+	float v4 = chargerampslv * 100;
+	int voltage1 = (int) v1;
+	int voltage2 = (int) v2;
+    int voltage3 = (int) v3;
+    int voltage4 = (int) v4;
+	memcpy(buf, &voltage1, 2);
+	memcpy(buf + 2, &voltage2, 2);
+	memcpy(buf + 4, &voltage3, 2);
+	memcpy(buf + 6, &voltage4, 2);
+
+  // write 3rd CAN frame to serial
+  SendCANFrameToSerial(3101, buf);
+
+  memcpy(buf, &chargertemperature, 2);
+  memcpy(buf + 2, &bmstemperature, 2);
+  memcpy(buf + 4, &zillatemperature, 2);
+  memcpy(buf + 6, &ambienttemperature, 2);
+
+  // write 3rd CAN frame to serial
+  SendCANFrameToSerial(3102, buf);
 
 
   memcpy(buf, &rpm, 2);
@@ -331,14 +316,14 @@ void SendCANFramesToSerial()
 
     for (int i = 1; i < 37; i = i + 4) {
       
-      float v1 = RequestVoltage(i) * 1000;
-      float v2 = RequestVoltage(i+1) * 1000;
-      float v3 = RequestVoltage(i+2) * 1000;
-      float v4 = RequestVoltage(i+3) * 1000;
-      int voltage1 = (int) v1;
-      int voltage2 = (int) v2;
-      int voltage3 = (int) v3;
-      int voltage4 = (int) v4;
+      v1 = RequestVoltage(i) * 100;
+      v2 = RequestVoltage(i+1) * 100;
+      v3 = RequestVoltage(i+2) * 100;
+      v4 = RequestVoltage(i+3) * 100;
+      voltage1 = (int) v1;
+      voltage2 = (int) v2;
+      voltage3 = (int) v3;
+      voltage4 = (int) v4;
       memcpy(buf, & voltage1, 2);
       memcpy(buf + 2, & voltage2, 2);
       memcpy(buf + 4, & voltage3, 2);
@@ -350,6 +335,59 @@ void SendCANFramesToSerial()
     }
 
   }
+
+float t1 = TempPack[0]*100;
+float t2 = TempPack[1]*100;
+float t3 = TempPack[2]*100;
+float t4 = TempPack[3]*100;
+int temp1 = (int) t1;
+int temp2 = (int) t2;
+int temp3 = (int) t3;
+int temp4 = (int) t4;
+memcpy(buf, &temp1, 2);
+memcpy(buf + 2, &temp2, 2);
+memcpy(buf + 4, &temp3, 2);
+memcpy(buf + 6, &temp4, 2);
+
+  // write first CAN frame to serial
+  SendCANFrameToSerial(3211, buf);
+
+
+t1 = TempPack[4]*100;
+t2 = TempPack[5]*100;
+t3 = TempPack[6]*100;
+t4 = TempPack[7]*100;
+temp1 = (int) t1;
+temp2 = (int) t2;
+temp3 = (int) t3;
+temp4 = (int) t4;
+memcpy(buf, &temp1, 2);
+memcpy(buf + 2, &temp2, 2);
+memcpy(buf + 4, &temp3, 2);
+memcpy(buf + 6, &temp4, 2);
+
+  // write first CAN frame to serial
+  SendCANFrameToSerial(3212, buf);
+
+
+t1 = TempPack[8]*1000;
+t2 = TempPack[9]*1000;
+t3 = TempPack[10]*1000;
+t4 = TempPack[11]*1000;
+temp1 = (int) t1;
+temp2 = (int) t2;
+temp3 = (int) t3;
+temp4 = (int) t4;
+memcpy(buf, &temp1, 2);
+memcpy(buf + 2, &temp2, 2);
+memcpy(buf + 4, &temp3, 2);
+memcpy(buf + 6, &temp4, 2);
+
+  // write first CAN frame to serial
+  SendCANFrameToSerial(3213, buf);
+
+
+
 
 }
 
@@ -579,56 +617,97 @@ char MyString[10];
 }
 
 
-
-
 void init_can(){
- 
-  M5.Lcd.printf("CAN Test A!\n");
-  M5.Lcd.printf("Receive first, then testing for sending function!\n");
-
-  // Initialize MCP2515 running at 16MHz with a baudrate of 500kb/s and the masks and filters disabled.
+   // Initialize MCP2515 running at 16MHz with a baudrate of 500kb/s and the masks and filters disabled.
   if(CAN0.begin(MCP_ANY, CAN_500KBPS, MCP_8MHZ) == CAN_OK)
     Serial.println("MCP2515 Initialized Successfully!");
   else
     Serial.println("Error Initializing MCP2515...");
-
   CAN0.setMode(MCP_NORMAL);                     // Set operation mode to normal so the MCP2515 sends acks to received data.
-
   pinMode(CAN0_INT, INPUT);                            // Configuring pin for /INT input
 
-  Serial.println("MCP2515 Library Receive Example...");
-
 }
 
 
-void test_can(){
- // unsigned char buf[8];
+void gettemperatures(){
+// start another cycle if >400 milliseconds have gone by...
+    Serial.print("Temperatures are: ");
+    for(temploop=0; temploop < 12; temploop++){
+ //   Serial.print(sensors.getTempCByIndex(11),1); // 1 decimal place of precision
+      TempPack[temploop]=sensors.getTempF(AddrList[temploop]);
+      Serial.print(TempPack[temploop]);// print with 1 decimal place of precision      
+      Serial.print(" ");
+    }
+    Serial.println(); // cr/lf
+    sensors.requestTemperatures(); // Send global command to convert temperatures, no wait
+    // You can have more than one IC on the sa()me bus. 
+    // 0 refers to the first IC on the wire
+}
 
-           //     Serial.print("made it here");
-  if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, read receive buffer
-  {
-           //   Serial.print("made it here");
-    CAN0.readMsgBuf(&rxId, &len, rxBuf);      // Read data: len = data length, buf = data byte(s)
+void readcharger(){
 
-//rxId = 0x1800e5f5;
+//canbus loop code start
+unsigned char len = 0;
+//unsigned char CanStat;
+if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, read receive buffer
+  {         // check if data coming 
+        CAN0.readMsgBuf(&rxId, &len, rxBuf);    // read data,  len: data length, buf: data buf 
 
-        Serial.println(rxId, HEX);
-        Serial.println(len);
-    //    Serial.println(rxBuf);
-           if(rxId == 0x1800e5f5)//0x1800e5f5
+     //   Serial.print("rxId=");
+     //   Serial.println(rxId,HEX);
+        rxId = rxId & 0x1fffffff;
+  //      Serial.println(rxId, HEX);
+        if(rxId == 0x18ff50e5)
+        {
+            Serial.println("***********************************");
+             Serial.print("Get data from CCS1 ID: 0x");
+             Serial.println(rxId,HEX);
+            for(int i = 0; i<len; i++)    // print the data
             {
-
-                Serial.println("----------------------------------");
-                 Serial.print("Get data from DCDC ID: 0x");
-                 Serial.println(rxId,HEX);
-                for(int i = 0; i<len; i++)    // print the data
-                {
-                    Serial.print(rxBuf[i], HEX);
-                    Serial.print("\t");
-                }
+                Serial.print(rxBuf[i], HEX);
+                Serial.print("\t");
+            }
             Serial.println();
-            
-  }
-}
+            chargervoltshv = (rxBuf[0]*256+rxBuf[1])/10.0;
+            chargerampshv = (rxBuf[2]*256+rxBuf[3])/10.0;
+            Serial.print("volts=");
+            Serial.print(chargervoltshv,1);Serial.print(" ");
+            Serial.print("amps=");
+            Serial.print(chargerampshv,1);Serial.print(" ");
+            Serial.print("status=");
+            Serial.println(rxBuf[4]);Serial.println();
+        }
+        rxId = rxId & 0x1fffffff;
+  //      Serial.println(rxId, HEX);
+        if(rxId == 0x1800e5f5)//0x18ffe5f5
+        {
+            Serial.println("----------------------------------");
+             Serial.print("Get data from DCDC ID: 0x");
+             Serial.println(rxId,HEX);
+            for(int i = 0; i<len; i++)    // print the data
+            {
+                Serial.print(rxBuf[i], HEX);
+                Serial.print("\t");
+            }
+            Serial.println();
+            chargervoltslv = (rxBuf[5]*.2);
+            chargerampslv = (rxBuf[4]*256+rxBuf[3])/10.0;
+            chargertemperature = rxBuf[7]-40;
+            Serial.print("volts=");
+            Serial.print(chargervoltslv,1);Serial.print(" ");
+            Serial.print("amps=");
+            Serial.print(chargerampslv,1);Serial.print(" ");
+            Serial.print("temperature=");
+            Serial.print(chargertemperature);Serial.println("C");
+        }
+        if (millis() - startTime1 >= 1000) {
+          startTime1 = millis();
+          Serial.println("sending BGS1 command");
+          SendCanBGS1_Cmd(140,3); // 140 volts, 3 amps
+          Serial.println("sending VCU command");
+          SendCanVCU_Cmd(14,5);  // dc battery 14 volts, 5 amps
+        }
+    }
+//canbus loop code end
 
 }
