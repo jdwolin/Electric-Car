@@ -6,6 +6,9 @@
 // this revision will keep the bms active for up to 10 seconds without mothership intervention. to do this,
 // this code will ping the bms hardware for values once every second and keep the latest values in ram. When the mothership requests voltage values,
 // the code will respond with the values in ram instead of requesting for the latest values from the bms hardware.
+// rev 3 11/4/2019
+// Remove obsolete commands from help command.
+// set bms memory structure with correct bms thresholds before setting bms registers for the first time
 //
 
 #include <LTC681x.h>
@@ -208,17 +211,16 @@ void loop()
         BmsTimer = 1000; // reset bms timer
         Serial.println("bms timer reset"); 
 
-  wakeup_sleep(TOTAL_IC);
-  LTC6813_set_cfgr(1,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC0, dctoBits, UV, OV); // update fet gate control IC0
-  LTC6813_set_cfgrb(1,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC0B);  
-
-  LTC6813_set_cfgr(0,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC1, dctoBits, UV, OV); // update fet gate control IC1
-  LTC6813_set_cfgrb(0,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC1B);   
-
-  LTC6813_wrcfg(TOTAL_IC,bms_ic);
-  LTC6813_wrcfgb(TOTAL_IC,bms_ic);
-
-        
+        wakeup_sleep(TOTAL_IC);
+        LTC6813_set_cfgr(1,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC0, dctoBits, UV, OV); // update fet gate control IC0
+        LTC6813_set_cfgrb(1,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC0B);  
+      
+        LTC6813_set_cfgr(0,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC1, dctoBits, UV, OV); // update fet gate control IC1
+        LTC6813_set_cfgrb(0,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC1B);   
+      
+        LTC6813_wrcfg(TOTAL_IC,bms_ic);
+        LTC6813_wrcfgb(TOTAL_IC,bms_ic);
+   
         measurement_loop(DATALOG_ENABLED); // read the cell voltages
         UpdateFets();                      // update bms hardware
       }
@@ -446,7 +448,6 @@ void run_command(uint32_t cmd)
   uint16_t DwReadIC=0;
   char input = 0;
   uint32_t adcstate =0;
-  MothershipTimer = 10000; // reset timer
   switch (cmd)
   {
     case 1:
@@ -521,7 +522,7 @@ void run_command(uint32_t cmd)
 
     case 34://debug to simulate cell voltage request from mothership
       Serial.println("Mothership timer has been set to 5 seconds");
-      MothershipTimer = 5000; // 5 second timer
+      MothershipTimer = 10000; // 10 second timer
     break;
     
     case 35:
@@ -532,9 +533,15 @@ void run_command(uint32_t cmd)
         OV = DwReadIC;              
         Serial.print(OV,DEC);
         Serial.println();  
-        wakeup_sleep(TOTAL_IC);
-        LTC6813_wrcfg(TOTAL_IC,bms_ic);
-        LTC6813_wrcfgb(TOTAL_IC,bms_ic);
+//        wakeup_sleep(TOTAL_IC);
+//        LTC6813_set_cfgr(1,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC0, dctoBits, UV, OV); // update fet gate control IC0
+//        LTC6813_set_cfgrb(1,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC0B);  
+//      
+//        LTC6813_set_cfgr(0,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC1, dctoBits, UV, OV); // update fet gate control IC1
+//        LTC6813_set_cfgrb(0,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC1B);   
+        
+//        LTC6813_wrcfg(TOTAL_IC,bms_ic);
+//        LTC6813_wrcfgb(TOTAL_IC,bms_ic);
       }  
     break;
 
@@ -625,17 +632,18 @@ void check_error(int error)
 ***********************************/
 void print_menu()
 {
-  Serial.println(F("Write and Read Configuration: 1                                | Loop measurements with datalog output : 11            | Write and Read of PWM : 21 "));
-  Serial.println(F("Start Cell Voltage Conversion: 2                               | Run Mux Self Test : 12                                | Write and  Read of Scontrol : 22 "));
-  Serial.println(F("Read Cell Voltages: 3                                          | Run ADC Self Test: 13                                 | Write and Read of PWM/S control Register B : 23 "));
-  Serial.println(F("Start Aux Voltage Conversion: 4                                | ADC overlap Test : 14                                 | Clear S control register : 24 "));
-  Serial.println(F("Read Aux Voltages: 5                                           | Run Digital Redundancy Test : 15                      | SPI Communication  : 25 "));
-  Serial.println(F("Start Stat Voltage Conversion: 6                               | Open Wire Test : 16                                   | I2C Communication Write to Slave :26 "));
-  Serial.println(F("Read Stat Voltages: 7                                          | Print PEC Counter: 17                                 | I2C Communication Read from Slave :27"));
-  Serial.println(F("Start Combined Cell Voltage and GPIO1, GPIO2 Conversion: 8     | Reset PEC Counter: 18                                 | Enable MUTE : 28"));
-  Serial.println(F("Start  Cell Voltage and Sum of cells : 9                       | Set Discharge: 19                                     | Disable MUTE : 29"));
-  Serial.println(F("loop Measurements: 10                                          | Clear Discharge: 20                                   | Clear Registers: 30 "));
-  Serial.println(F("Over Voltage Threshold: 31                                     | disp bms thresholds: 32                                    | Random I2C cell data: 33"));
+  Serial.println(F("Write and Read Configuration: 1"));
+  Serial.println(F("Start Cell Voltage Conversion: 2"));
+  Serial.println(F("Read Cell Voltages: 3"));
+  Serial.println(F("Start Aux Voltage Conversion: 4"));
+  Serial.println(F("Read Aux Voltages: 5"));
+  Serial.println(F("Start Stat Voltage Conversion: 6"));
+  Serial.println(F("Read Stat Voltages: 7"));
+  Serial.println(F("Set bms over Voltage Threshold and run infinite readback loop: 31"));
+  Serial.println(F("disp bms thresholds: 32"));
+  Serial.println(F("Random I2C cell data during mothership read requests: 33"));
+  Serial.println(F("Set mothership timeout to 10 seconds: 34"));
+  Serial.println(F("Set over voltage bms threshold: 35"));
   Serial.println();
   Serial.println(F("Print 'm' for menu"));
   Serial.println(F("Please enter command: "));
