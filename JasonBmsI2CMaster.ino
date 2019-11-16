@@ -1,6 +1,15 @@
  // code for Jason's EV beetle. 10/4/2019
 // 10/6/2019 menu option to send fake random data between 3.6 and 4.2 volts
-// added this comment line 11/2/2019 11:00pm. NO CODE changes!
+// rev 1  
+// this version relys on the mothership to continuously request voltage values so the bms will not timeout.
+// rev 2 11/3/2019
+// this revision will keep the bms active for up to 10 seconds without mothership intervention. to do this,
+// this code will ping the bms hardware for values once every second and keep the latest values in ram. When the mothership requests voltage values,
+// the code will respond with the values in ram instead of requesting for the latest values from the bms hardware.
+// rev 3 11/4/2019
+// Remove obsolete commands from help command.
+// set bms memory structure with correct bms thresholds before setting bms registers for the first time
+//
 
 #include <LTC681x.h>
 
@@ -50,6 +59,12 @@ char get_char();
 
 ***********************************************************/
 const uint8_t TOTAL_IC = 2;//!<number of ICs in the daisy chain
+
+// 36 cell voltages
+float CellVoltages[36];
+unsigned int BmsTimer = 0;
+unsigned int MothershipTimer = 0;
+unsigned int OneSecondTimer = 0;
 
 //ADC Command Configurations---------------------See LTC681x.h for options
 const uint8_t ADC_OPT = ADC_OPT_DISABLED;
@@ -139,6 +154,8 @@ bool dccBits_b[7]= {false,false,false,false,false,false,false}; //Dcc 0,13,14,15
 void setup()
 {
   Serial.begin(115200);
+  OCR0A = 0xAF;             // 1ms timer setup
+  TIMSK0 |= _BV(OCIE0A);    // 1ms timer setup
   quikeval_SPI_connect();
   spi_enable(SPI_CLOCK_DIV32); // This will set the Linduino to have a 1MHz Clock
   LTC6813_init_cfg(TOTAL_IC, bms_ic);
@@ -151,22 +168,29 @@ void setup()
   LTC6813_reset_crc_count(TOTAL_IC,bms_ic);
   LTC6813_init_reg_limits(TOTAL_IC,bms_ic);
 
-  // I2C stuff
+  // I2C setup stuff
   Wire.begin(SLAVE_ADDRESS);
   Wire.onReceive(receiveEvent);
   Wire.onRequest(requestEvent);
   Serial.println("I2C up and running... waiting for I2C communication");
   print_menu();
 
-float a=3.1200;
-Serial.print("a=");
-Serial.println(a,4);
-char str[10];
-dtostrf(a, 6, 4, str);     // convert to string,6 total characters, 4 digits precision
-Serial.print("string equivalent=");
-Serial.println(str);
+// debug to see how floats are printed
+//float a=3.1200;
+//Serial.print("a=");
+//Serial.println(a,4);
+//char str[10];
+//dtostrf(a, 6, 4, str);     // convert to string,6 total characters, 4 digits precision
+//Serial.print("string equivalent=");
+//Serial.println(str);
 
-  
+}// end setup
+
+SIGNAL(TIMER0_COMPA_vect) // routine that is called every millisecond from system timer
+{
+  if(MothershipTimer > 0) MothershipTimer --; // only a command from the mothership keeps this variable > 0
+  if(BmsTimer > 0) BmsTimer--;                 // how often to send BMS commands to bms hardware
+  if(OneSecondTimer > 0) OneSecondTimer --;    // system timer
 }
 
 /*!*********************************************************************
@@ -181,11 +205,33 @@ void loop()
     Serial.println(user_command);
     run_command(user_command);
   }
-  else 
-  {
-//    ToggleLed();
-//    delay(500);
-  }
+  else {
+    if(MothershipTimer > 0){
+      if(BmsTimer == 0){
+        BmsTimer = 1000; // reset bms timer
+        Serial.println("bms timer reset"); 
+
+        wakeup_sleep(TOTAL_IC);
+        LTC6813_set_cfgr(1,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC0, dctoBits, UV, OV); // update fet gate control IC0
+        LTC6813_set_cfgrb(1,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC0B);  
+      
+        LTC6813_set_cfgr(0,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC1, dctoBits, UV, OV); // update fet gate control IC1
+        LTC6813_set_cfgrb(0,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC1B);   
+      
+        LTC6813_wrcfg(TOTAL_IC,bms_ic);
+        LTC6813_wrcfgb(TOTAL_IC,bms_ic);
+   
+        measurement_loop(DATALOG_ENABLED); // read the cell voltages
+        UpdateFets();                      // update bms hardware
+      }
+    }
+    else {
+      if(OneSecondTimer == 0) {
+        OneSecondTimer = 1000; // reset timer
+        Serial.println("Mother ship timeout");
+      }
+    }// mothership timeout
+  }// serial available
 }
 
 
@@ -224,10 +270,10 @@ void requestEvent() // master is requesting the voltage from a cell number passe
 char str_temp[8];
   if((CellNumber > 0) && (CellNumber <= 36)) {
     if(CellNumber == 1) {
-        wakeup_sleep(TOTAL_IC);
-        LTC6813_wrcfg(TOTAL_IC,bms_ic);
-        LTC6813_wrcfgb(TOTAL_IC,bms_ic);
-        measurement_loop(DATALOG_ENABLED); // read all cell voltages
+//        wakeup_sleep(TOTAL_IC);
+//        LTC6813_wrcfg(TOTAL_IC,bms_ic);  // is this needed here?? debug
+//        LTC6813_wrcfgb(TOTAL_IC,bms_ic); // is this needed here?? debug
+//        measurement_loop(DATALOG_ENABLED); // read all cell voltages
     }
     if(RandomFlag == 0){
       
@@ -276,11 +322,12 @@ CellNumber = 0;
   Arg2Ptr = strtok(0," \r");     // 0 continues parsing from previous stopping point.
 
 // test for valid commands
-  if (strcmp(CmdPtr, "CV") == 0) {
+  if (strcmp(CmdPtr, "CV") == 0) { // cell voltage command
     CellNumber = atoi(Arg1Ptr);     // assign cell number from arg 1
+    MothershipTimer = 10000;        // reset 10 second timer
  //   Serial.print("CN=");Serial.println(CellNumber);
   }
-  else if (strcmp(CmdPtr, "SV") == 0) {
+  else if (strcmp(CmdPtr, "SV") == 0) { // set bms lower and upper voltage turn on
     BmsLowVoltage  = atoi(Arg1Ptr);
     BmsHighVoltage = atoi(Arg2Ptr);
     UV = BmsLowVoltage;  // update global thresholds
@@ -403,7 +450,6 @@ void run_command(uint32_t cmd)
   uint32_t adcstate =0;
   switch (cmd)
   {
-
     case 1:
       wakeup_sleep(TOTAL_IC);
       LTC6813_wrcfg(TOTAL_IC,bms_ic);
@@ -474,7 +520,31 @@ void run_command(uint32_t cmd)
       RandomFlag = (uint16_t)read_int();
     break;
 
-   
+    case 34://debug to simulate cell voltage request from mothership
+      Serial.println("Mothership timer has been set to 5 seconds");
+      MothershipTimer = 10000; // 10 second timer
+    break;
+    
+    case 35:
+      Serial.print(F("Please enter Over Voltage threshold in mV"));
+      Serial.println();
+      DwReadIC = (uint16_t)read_int();
+      if(DwReadIC != 0){
+        OV = DwReadIC;              
+        Serial.print(OV,DEC);
+        Serial.println();  
+//        wakeup_sleep(TOTAL_IC);
+//        LTC6813_set_cfgr(1,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC0, dctoBits, UV, OV); // update fet gate control IC0
+//        LTC6813_set_cfgrb(1,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC0B);  
+//      
+//        LTC6813_set_cfgr(0,bms_ic,REFON,ADCOPT,gpioBits_dw,DwDccbits_IC1, dctoBits, UV, OV); // update fet gate control IC1
+//        LTC6813_set_cfgrb(0,bms_ic,FDRF,DTMEN,psBits,gpioBits_b,DwDccbits_IC1B);   
+        
+//        LTC6813_wrcfg(TOTAL_IC,bms_ic);
+//        LTC6813_wrcfgb(TOTAL_IC,bms_ic);
+      }  
+    break;
+
     case 'm': //prints menu
       print_menu();
       break;
@@ -515,7 +585,7 @@ void measurement_loop(uint8_t datalog_en) // ***********************************
     wakeup_idle(TOTAL_IC);
     error = LTC6813_rdcv(0, TOTAL_IC,bms_ic);
     check_error(error);
-    print_cells(datalog_en);  //uncommented causes data to jason to mess up fro some reason
+ //   print_cells(datalog_en);  //uncommented causes data to jason to mess up for some reason
 
   }
 
@@ -562,17 +632,18 @@ void check_error(int error)
 ***********************************/
 void print_menu()
 {
-  Serial.println(F("Write and Read Configuration: 1                                | Loop measurements with datalog output : 11            | Write and Read of PWM : 21 "));
-  Serial.println(F("Start Cell Voltage Conversion: 2                               | Run Mux Self Test : 12                                | Write and  Read of Scontrol : 22 "));
-  Serial.println(F("Read Cell Voltages: 3                                          | Run ADC Self Test: 13                                 | Write and Read of PWM/S control Register B : 23 "));
-  Serial.println(F("Start Aux Voltage Conversion: 4                                | ADC overlap Test : 14                                 | Clear S control register : 24 "));
-  Serial.println(F("Read Aux Voltages: 5                                           | Run Digital Redundancy Test : 15                      | SPI Communication  : 25 "));
-  Serial.println(F("Start Stat Voltage Conversion: 6                               | Open Wire Test : 16                                   | I2C Communication Write to Slave :26 "));
-  Serial.println(F("Read Stat Voltages: 7                                          | Print PEC Counter: 17                                 | I2C Communication Read from Slave :27"));
-  Serial.println(F("Start Combined Cell Voltage and GPIO1, GPIO2 Conversion: 8     | Reset PEC Counter: 18                                 | Enable MUTE : 28"));
-  Serial.println(F("Start  Cell Voltage and Sum of cells : 9                       | Set Discharge: 19                                     | Disable MUTE : 29"));
-  Serial.println(F("loop Measurements: 10                                          | Clear Discharge: 20                                   | Clear Registers: 30 "));
-  Serial.println(F("Over Voltage Threshold: 31                                     | disp bms thresholds: 32                                    | Random I2C cell data: 33"));
+  Serial.println(F("Write and Read Configuration: 1"));
+  Serial.println(F("Start Cell Voltage Conversion: 2"));
+  Serial.println(F("Read Cell Voltages: 3"));
+  Serial.println(F("Start Aux Voltage Conversion: 4"));
+  Serial.println(F("Read Aux Voltages: 5"));
+  Serial.println(F("Start Stat Voltage Conversion: 6"));
+  Serial.println(F("Read Stat Voltages: 7"));
+  Serial.println(F("Set bms over Voltage Threshold and run infinite readback loop: 31"));
+  Serial.println(F("disp bms thresholds: 32"));
+  Serial.println(F("Random I2C cell data during mothership read requests: 33"));
+  Serial.println(F("Set mothership timeout to 10 seconds: 34"));
+  Serial.println(F("Set over voltage bms threshold: 35"));
   Serial.println();
   Serial.println(F("Print 'm' for menu"));
   Serial.println(F("Please enter command: "));
