@@ -36,12 +36,13 @@ DallasTemperature sensors(&oneWire);
 BluetoothSerial SerialBT;
 
 int temploop = 0;
-unsigned int TemperatureTimer=0, celltimer = 0, temptimer = 0, chargetimer = 0, resettimer = 0; 
-int cellpacket = 1, buttonpacket = 1, chargepacket = 1, temppacket = 1;  // timer variables
+unsigned long TemperatureTimer=0, celltimer = 0, temptimer = 0, chargetimer = 0, resettimer = 0, keepalivetimer = 0, keepalivecounter = 0, bmstimer = 0; 
+int cellpacket = 1, buttonpacket = 1, chargepacket = 1, temppacket = 1,  bmssetpacket = 1; // timer variables
 int lastvalue; // variable for button loop
-float chargervoltshv, chargervoltslv, chargerampshv, chargervoltstotal, chargerampslv, chargertemperature, bmstemperature, zillatemperature, ambienttemperature;
-float CellVoltage; // for sending cell voltages to mothership
+float bmssetting,setchargervoltshv, setchargervoltslv, setchargerampshv, setchargerampslv, chargervoltshv, chargervoltslv, chargerampshv, chargervoltstotal, chargerampslv, chargertemperature, bmstemperature, zillatemperature, ambienttemperature;
+float CellVoltage, TotalPackVoltage = 0, batteryamps = 0, minvoltage = 0, maxvoltage = 0, deltavoltage = 0; // for sending cell voltages to mothership
 float TempPack[15] = {0};
+float CellVoltages[40] = {3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2};
 char input;   //maybe uneeded?
 unsigned int priority = 0;
 unsigned int rpm = 0;
@@ -65,9 +66,12 @@ void init_can();  // compiler setup
 
 void setup()
 {
+delay(5000);
 M5.begin();
 Serial.begin(115200); 
- /*
+pinMode(26, INPUT);
+
+/*
   EEPROM.begin(512);  // reset eeprom stored values.
     delay(10);
     EEPROM.put(0, 3500); //bms 
@@ -82,30 +86,9 @@ Serial.begin(115200);
     yield();
     EEPROM.end(); 
 */
-
-
 sensors.setWaitForConversion(0); // don't wait for temperature conversion to complete
 sensors.begin();
 sensors.setResolution(11); 
-int eemem = 0;
-EEPROM.begin(EEPROM_SIZE);
-EEPROM.get(0, eemem);
-EEPROM.end();
-Serial.print("eemem:");
-Serial.println(eemem);
-if(eemem>3000){   // ensure that a random low number doesn't get entered..ie eeprom erased.
-ButtonOutput[1]=eemem;
-// ButtonOutput[1] = 35000;  //BMS Set
-Serial.print("ButtonOutput1:  ");
-Serial.println(ButtonOutput[1]);
-}
-if(ButtonOutput[1]>4100){
-ButtonOutput[1]= 3800;
-} 
-if(ButtonOutput[1]<3000){
-ButtonOutput[1]= 3800;
-}
-lastvalue = ButtonOutput[1];  // bms setpoint
 EEPROM.begin(EEPROM_SIZE);
 EEPROM.get(10, ButtonOutput[2]);  // charger on/off
 EEPROM.get(20, ButtonOutput[3]);  // pack current
@@ -113,8 +96,12 @@ EEPROM.get(30, ButtonOutput[4]);  //12 v current
 EEPROM.get(40, ButtonOutput[5]);  // fan on/off
 EEPROM.get(50, ButtonOutput[6]);  // fan set temp
 EEPROM.get(60, ButtonOutput[7]);  // BMS on/off
-EEPROM.get(70, ButtonOutput[8]);  // extra
+EEPROM.get(70, ButtonOutput[8]);  // MaxHV voltage
 EEPROM.end();
+
+if(ButtonOutput[8]>150){   // check to make sure maxHV is not overset
+ButtonOutput[8]= 150;
+} 
 
 Serial.println("CAN BUS Shield init");
 //canbus start setup
@@ -126,25 +113,37 @@ Serial.println("CAN BUS Shield init ok!");
 
  Wire.begin();
  Serial.println("I2C up and running... waiting for I2C communication");
- M5.Lcd.setTextColor(TFT_WHITE,TFT_BLACK);  
- M5.Lcd.setTextSize(1);
- M5.Lcd.println(("VW Electric Initialization..."));
- SerialBT.begin("ESP32"); //Bluetooth device namemic
- Serial.println("The device started, now you can pair it with bluetooth!");
- M5.Lcd.println(("Pair with bluetooth!"));
+ SerialBT.register_callback(callback);
+ 
+  if(!SerialBT.begin("ESP32")){
+    Serial.println("An error occurred initializing Bluetooth");
+  }else{
+    Serial.println("Bluetooth initialized");
+  }
+
+ 
 }
 
 void loop()
 {
 SendCANFramesToSerial();
 ReadIncomingSerialData();
+//UpdateAmpReading();
+
+if (millis() - bmstimer >= 10000) {
+  bmstimer = millis();
+  SetBMSLimit(minvoltage*10+50);
+  Serial.print("BMS Voltage Set To: ");
+  Serial.println(minvoltage);
+} 
 
 if (millis() - resettimer >= 5000) {  // occasionaly send all packets to keep things from timing out on tablet.
 resettimer = millis();
-buttonpacket=1;
-cellpacket = 1;
-temppacket = 1;
-chargepacket = 1;
+buttonpacket = 1;
+//cellpacket = 1;
+//temppacket = 1;
+//chargepacket = 1;
+//SetBMSLimit(ButtonOutput[1]*10);
 }
 
 if(ButtonOutput[1] != lastvalue) // SetBMSLimit when variable changes.
@@ -153,52 +152,78 @@ lastvalue = ButtonOutput[1];
 SetBMSLimit(ButtonOutput[1]*10);
 }
 
-if (millis() - celltimer >= 2000) {  // time to update cell voltages
+if (ButtonOutput[7]==1){  // if BMS Turned on.
+if (millis() - celltimer >= 1000) {  // time to update cell voltages
           celltimer = millis();
-int xx;
-for(xx=1; xx <= 36;xx++){
-    CellVoltage=RequestVoltage(xx);   
-    Serial.print("Cell");
-    Serial.print(xx);
-    Serial.print(" Voltage=");
-    Serial.println(CellVoltage,3);
-    delay(20);
-}
 cellpacket = 1;
+ 
+
+}
 }
 
-if (millis() - temptimer >= 10000) {  // time to update temperature probe
+if (millis() - temptimer >= 15000) {  // time to update temperature probe
           temptimer = millis();
 gettemperatures();  
 temppacket = 1;
+
 }
 
+if (millis() - keepalivetimer >= 3000) {
+  keepalivetimer = millis();
+  M5.Lcd.setCursor(5, 50);
+  M5.Lcd.setTextColor(WHITE);
+  M5.Lcd.setTextSize(3);
+
+  M5.Lcd.setCursor(50, 50);
+  keepalivecounter = keepalivecounter + 1;
+  M5.Lcd.print("K: ");
+  M5.Lcd.fillRect(80, 50, 200, 75, TFT_BLACK);
+  M5.Lcd.print(keepalivecounter);
+
+}
+
+
+
 if (ButtonOutput[2]==1){  // if charger turned on from tablet
-if (millis() - chargetimer >= 500) {   // time to update charger
-	chargetimer = millis();
+if (millis() - chargetimer >= 800) {   // time to update charger
+  chargetimer = millis();
 readcharger(); 
 chargepacket = 1;
+
+
 }
 }
   // just some dummy values for simulated engine parameters
-  if (rpm++ > 10000)
-  {
-    rpm = 500;
-  }
-  if (kpa++ > 2500)
-  {
-    kpa = 10;
-  }
-  if (tps++ > 1000)
-  {
-    tps = 0;
-  }
-  if (clt++ > 230)
-  {
-    clt = 0;
-  }
+if (rpm++ > 10000)
+{
+rpm = 500;
+}
+if (kpa++ > 2500)
+{
+kpa = 10;
+}
+if (tps++ > 1000)
+{
+tps = 0;
+}
+if (clt++ > 230)
+{
+clt = 0;
+}
 
- 
+
+}
+
+
+void UpdateAmpReading()
+{
+  batteryamps=analogRead(26);
+  Serial.print("Car Amps from Battery: ");
+  Serial.println(batteryamps,3);
+  batteryamps=(batteryamps*300)/4095;
+  //batteryamps= batteryamps/1000;
+  Serial.print("Car Amps from Battery: ");
+  Serial.println(batteryamps,3);
 }
 
 
@@ -212,6 +237,13 @@ void SendCANFramesToSerial()
   memcpy(buf + 4, &clt, 2);
   memcpy(buf + 6, &tps, 2);
   SendCANFrameToSerial(3200, buf);
+
+  int amps1 = (int) batteryamps;
+  memcpy(buf, &amps1, 2);
+  memcpy(buf + 2, &amps1, 2);
+  memcpy(buf + 4, &amps1, 2);
+  memcpy(buf + 6, &amps1, 2);
+  SendCANFrameToSerial(3201, buf);
 
 if(buttonpacket == 1){
 
@@ -232,10 +264,10 @@ buttonpacket = 0;
 
 if(chargepacket == 1)
 {
-  float v1 = chargervoltshv * 100;
-  float v2 = chargervoltslv * 100;
-  float v3 = chargerampshv * 100;
-  float v4 = chargerampslv * 100;
+  float v1 = setchargervoltshv * 10;   // the setting itself
+  float v2 = setchargervoltslv * 1000;
+  float v3 = setchargerampshv * 10;
+  float v4 = setchargerampslv * 1000;
   int voltage1 = (int) v1;
   int voltage2 = (int) v2;
   int voltage3 = (int) v3;
@@ -246,11 +278,40 @@ if(chargepacket == 1)
   memcpy(buf + 6, &voltage4, 2);
   SendCANFrameToSerial(3101, buf);
 
+  v1 = chargervoltshv * 10;  // real time values
+  v2 = chargervoltslv * 1000;
+  v3 = chargerampshv * 10;
+  v4 = chargerampslv * 1000;
+  voltage1 = (int) v1;
+  voltage2 = (int) v2;
+  voltage3 = (int) v3;
+  voltage4 = (int) v4;
+  memcpy(buf, &voltage1, 2);  
+  memcpy(buf + 2, &voltage2, 2);
+  memcpy(buf + 4, &voltage3, 2);
+  memcpy(buf + 6, &voltage4, 2);
+  SendCANFrameToSerial(3102, buf);
+
+  v1 = chargertemperature;   // charger temperature
+  v2 = bmssetting;  // the actual bms setting
+  v3 = v3 * 100;
+  v4 = setchargervoltshv;
+  voltage1 = (int) v1;
+  voltage2 = (int) v2;
+  voltage3 = (int) v3;
+  voltage4 = (int) v4;
+  memcpy(buf, &voltage1, 2);
+  memcpy(buf + 2, &voltage2, 2);
+  memcpy(buf + 4, &voltage3, 2);
+  memcpy(buf + 6, &voltage4, 2);
+  SendCANFrameToSerial(3103, buf);
+
  chargepacket = 0;
 }
 
 if(cellpacket == 1){
 // voltage packets
+TotalPackVoltage = 0;
 int framepacket = 3202;
     for (int i = 1; i < 37; i = i + 4) {
       
@@ -258,19 +319,80 @@ int framepacket = 3202;
      float v2 = RequestVoltage(i+1) * 1000;
      float v3 = RequestVoltage(i+2) * 1000;
      float v4 = RequestVoltage(i+3) * 1000;
-     int voltage1 = (int) v1;
-     int voltage2 = (int) v2;
-     int voltage3 = (int) v3;
-     int voltage4 = (int) v4;
+     if (v1 > 1 && v1 < 5000){
+     CellVoltages[i] = v1;      
+     }
+     if (v2 > 1 && v2 < 5000){
+     CellVoltages[i+1] = v2;
+     }
+     if (v3 > 1 && v3 < 5000){
+     CellVoltages[i+2] = v3;      
+     }
+     if (v4 > 1 && v4 < 5000){
+     CellVoltages[i+3] = v4;
+     }
+
+     int voltage1 = (int) CellVoltages[i];
+     int voltage2 = (int) CellVoltages[i+1];
+     int voltage3 = (int) CellVoltages[i+2];
+     int voltage4 = (int) CellVoltages[i+3];
+     TotalPackVoltage = TotalPackVoltage + CellVoltages[i] + CellVoltages[i+1] + CellVoltages[i+2] + CellVoltages[i+3];
       memcpy(buf, & voltage1, 2);
       memcpy(buf + 2, & voltage2, 2);
       memcpy(buf + 4, & voltage3, 2);
       memcpy(buf + 6, & voltage4, 2);
-
+      Serial.print(v1,3);
+      Serial.print(v2,3);
+      Serial.print(v3,3);
+      Serial.print(v4,3);
+      Serial.print(TotalPackVoltage,3);
       SendCANFrameToSerial(framepacket, buf);
       framepacket++;
   }
-cellpacket = 0;
+
+  int voltage = (int) TotalPackVoltage / 100;  // prepare pack voltage to send
+
+minvoltage = CellVoltages[1] ; // Find lowest voltage level.               // 
+for (int i = 1; i<37; i++) // Changed this.
+{
+    if (CellVoltages[i] < minvoltage) {
+         minvoltage = CellVoltages[i];
+    }
+}
+
+maxvoltage = CellVoltages[1] ; // Find highest voltage level.               // 
+for (int i = 1; i<37; i++) // Changed this.
+{
+    if (CellVoltages[i] > maxvoltage) {
+         maxvoltage = CellVoltages[i];
+    }
+}
+
+deltavoltage = maxvoltage - minvoltage;
+int dvoltage = (int) deltavoltage;
+int xvoltage = (int) minvoltage;
+int nvoltage = (int) maxvoltage;
+  memcpy(buf, &voltage, 2);
+  memcpy(buf + 2, &nvoltage, 2);
+  memcpy(buf + 4, &xvoltage, 2);
+  memcpy(buf + 6, &dvoltage, 2);
+  SendCANFrameToSerial(3107, buf);
+
+  Serial.print("Total Pack Voltage: ");
+  Serial.println(TotalPackVoltage);
+  Serial.print("voltage:");
+  Serial.println(voltage);
+  //M5.Lcd.fillScreen(BLACK);
+  M5.Lcd.setCursor(5, 10);
+  M5.Lcd.setTextColor(WHITE);
+  M5.Lcd.setTextSize(3);
+
+  M5.Lcd.setCursor(50, 10);
+  M5.Lcd.print("V: ");
+  M5.Lcd.fillRect(100, 10, 200, 30, TFT_BLACK);
+  M5.Lcd.print(voltage/10);
+
+  cellpacket = 0;
 }
 
 if (temppacket == 1){
@@ -333,7 +455,8 @@ temppacket = 0;
 
 void SendCANFrameToSerial(unsigned long canFrameId, const byte* frameData)
 {
-  //Serial.println(digitalPins);
+
+//Serial.println(digitalPins);
   // the 4 byte identifier at the beginning of each CAN frame
   // this is required for RealDash to 'catch-up' on ongoing stream of CAN frames
   SerialBT.write((const byte * ) & serialBlockTag, 4);
@@ -343,10 +466,16 @@ void SendCANFrameToSerial(unsigned long canFrameId, const byte* frameData)
 
   // CAN frame payload
   SerialBT.write(frameData, 8);
+
+//Serial.println("Writeframe");
+
 }
 
 void ReadIncomingSerialData()
 {
+
+//Serial.println("Readframe");
+
  while (SerialBT.available() > 0)
   {
     // little bit of extra effort here, since especially Bluetooth connections
@@ -434,7 +563,7 @@ void HandleIncomingSetValueFrame(unsigned long canFrameId, const byte* frameData
     EEPROM.commit();  
     yield();
     EEPROM.end(); 
-    }	
+    } 
   }
 
  buttonpacket = 1;
@@ -460,7 +589,7 @@ void HandleIncomingSetValueFrame(unsigned long canFrameId, const byte* frameData
     EEPROM.commit();  
     yield();
     EEPROM.end(); 
-    }	
+    } 
   }
 
     buttonpacket = 1;
@@ -474,6 +603,7 @@ void SendCanBGS1_Cmd(unsigned int volts, unsigned int amps)
 {
 //     Serial.print("Sending Can BGS1 cmd\r\n");
   // send data:  id, standard frame, data len = 8, stmp: data buf
+
   stmp[0]=(volts*10)>>8;     //high byte. 0.1 volts/bit
   stmp[1]=(volts*10)&0x00ff; //low byte.
   stmp[2]=(amps*10)>>8;     //high byte. 0.1 amps/bit
@@ -532,6 +662,11 @@ char MyString[10];
     Wire.write("\r");       // terminate with carriage return delimiter. This is what I will look for when parsing.
     Wire.endTransmission();
     Serial.print("Sent BMS Data...");
+  M5.Lcd.fillRect(50, 150, 350, 175, TFT_BLACK);
+  M5.Lcd.setCursor(10, 150);
+  M5.Lcd.print("BMS:");
+  M5.Lcd.setCursor(100, 150);
+  M5.Lcd.print(HighLimit);
 }
 
 
@@ -560,56 +695,78 @@ if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, re
  //   Serial.print("rxId=");
  //   Serial.println(rxId,HEX);
     rxId = rxId & 0x1fffffff;
-      Serial.println(rxId, HEX);
+ //     Serial.println(rxId, HEX);
     if(rxId == 0x18ff50e5)
     {
-        Serial.println("***********************************");
-         Serial.print("Get data from CCS1 ID: 0x");
-         Serial.println(rxId,HEX);
+ ///       Serial.println("***********************************");
+  //       Serial.print("Get data from CCS1 ID: 0x");
+  //       Serial.println(rxId,HEX);
         for(int i = 0; i<len; i++)    // print the data
         {
-            Serial.print(rxBuf[i], HEX);
-            Serial.print("\t");
+  //          Serial.print(rxBuf[i], HEX);
+  //          Serial.print("\t");
         }
-        Serial.println();
+  //      Serial.println();
         chargervoltshv = (rxBuf[0]*256+rxBuf[1])/10.0;
         chargerampshv = (rxBuf[2]*256+rxBuf[3])/10.0;
-        Serial.print("volts=");
-        Serial.print(chargervoltshv,1);Serial.print(" ");
-        Serial.print("amps=");
-        Serial.print(chargerampshv,1);Serial.print(" ");
-        Serial.print("status=");
-        Serial.println(rxBuf[4]);Serial.println();
+  //      Serial.print("volts=");
+  //      Serial.print(chargervoltshv,1);Serial.print(" ");
+   ///     Serial.print("amps=");
+   //     Serial.print(chargerampshv,1);Serial.print(" ");
+  //      Serial.print("status=");
+  //      Serial.println(rxBuf[4]);Serial.println();
     }
     rxId = rxId & 0x1fffffff;
 //      Serial.println(rxId, HEX);
     if(rxId == 0x1800e5f5)//0x18ffe5f5
     {
-        Serial.println("----------------------------------");
-         Serial.print("Get data from DCDC ID: 0x");
-         Serial.println(rxId,HEX);
+ //       Serial.println("----------------------------------");
+ //        Serial.print("Get data from DCDC ID: 0x");
+ //        Serial.println(rxId,HEX);
         for(int i = 0; i<len; i++)    // print the data
         {
-            Serial.print(rxBuf[i], HEX);
-            Serial.print("\t");
+  //          Serial.print(rxBuf[i], HEX);
+  //          Serial.print("\t");
         }
-        Serial.println();
+   //     Serial.println();
         chargervoltslv = (rxBuf[5]*.2);
         chargerampslv = (rxBuf[4]*256+rxBuf[3])/10.0;
         chargertemperature = rxBuf[7]-40;
-        Serial.print("volts=");
-        Serial.print(chargervoltslv,1);Serial.print(" ");
-        Serial.print("amps=");
-        Serial.print(chargerampslv,1);Serial.print(" ");
-        Serial.print("temperature=");
-        Serial.print(chargertemperature);Serial.println("C");
+
+
+
+   //     Serial.print("volts=");
+   //     Serial.print(chargervoltslv,1);Serial.print(" ");
+   //     Serial.print("amps=");
+   //     Serial.print(chargerampslv,1);Serial.print(" ");
+   //     Serial.print("temperature=");
+   //     Serial.print(chargertemperature);Serial.println("C");
     }
     if (millis() - canbustime >= 1000) {
       canbustime = millis();
-      Serial.println("sending BGS1 command");
-      SendCanBGS1_Cmd(140,3); // 140 volts, 3 amps
-      Serial.println("sending VCU command");
-      SendCanVCU_Cmd(14,5);  // dc battery 14 volts, 5 amps
+   //   Serial.println("sending BGS1 command");
+ 
+      setchargerampslv = ButtonOutput[4];  //when ready to test add these variables in place of hard coded values below
+      setchargerampshv = ButtonOutput[3];
+      bmssetting = (ButtonOutput[1]/1000)*36;
+      setchargervoltshv = ButtonOutput[8];
+
+   //     Serial.print("setchargerampslv=");
+   ///     Serial.print(ButtonOutput[4]);Serial.print(" ");
+   //     Serial.print("setchargerampshv=");
+   //     Serial.print(ButtonOutput[3]);Serial.print(" ");
+   //     Serial.print("bmssetting=");
+   //     Serial.print(ButtonOutput[1]);Serial.print(" ");
+   //     Serial.print("setchargervoltshv=");
+    //    Serial.print(ButtonOutput[8]);Serial.print(" ");
+
+
+
+//      Serial.print("BMS Set Voltage Calculated:");
+//      Serial.println(bmssetting);
+      SendCanBGS1_Cmd(setchargervoltshv,setchargerampshv); // 140 volts, 3 amps
+//      Serial.println("sending VCU command");
+      SendCanVCU_Cmd(14,setchargerampslv);  // dc battery 14 volts, 5 amps
     }
 }
 //canbus loop code end
@@ -631,7 +788,7 @@ int i;
     Wire.endTransmission();
    //Serial.print("Requesting Data...");
     
-    if(CellNumber == 1) delay(100);//allow time for bms to get new voltage data
+    if(CellNumber == 1) delay(400);//allow time for bms to get new voltage data
     Wire.requestFrom(SLAVE_ADDRESS,8); // now request some data, up to 8 characters
     i=0;
     while (Wire.available()) { // counts down the REQUESTED character count
@@ -648,10 +805,14 @@ int i;
 
 void gettemperatures(){
 // start another cycle if >400 milliseconds have gone by...
+float temptemp = 0;
     Serial.print("Temperatures are: ");
-    for(temploop=0; temploop < 12; temploop++){
+    for(temploop=0; temploop < 13; temploop++){
  //   Serial.print(sensors.getTempCByIndex(11),1); // 1 decimal place of precision
-      TempPack[temploop]=sensors.getTempF(AddrList[temploop]);
+      temptemp=sensors.getTempF(AddrList[temploop]);
+      if(temptemp < 80){
+        TempPack[temploop]=temptemp;
+      }
       Serial.print(TempPack[temploop]);// print with 1 decimal place of precision      
       Serial.print(" ");
     }
@@ -659,4 +820,16 @@ void gettemperatures(){
     sensors.requestTemperatures(); // Send global command to convert temperatures, no wait
     // You can have more than one IC on the sa()me bus. 
     // 0 refers to the first IC on the wire
+}
+
+
+void callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
+  if(event == ESP_SPP_SRV_OPEN_EVT){
+    Serial.println("Client Connected");
+  }
+
+  if(event == ESP_SPP_CLOSE_EVT ){
+    Serial.println("Client disconnected");
+   ESP.restart();
+  }
 }
