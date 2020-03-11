@@ -52,6 +52,68 @@
     </frame>
 
 
+    <frame id="3108">
+      <value name="BMS: 01" offset="0" length="2"></value>
+      <value name="BMS: 02" offset="2" length="2"></value>
+      <value name="BMS: 03" offset="4" length="2"></value>
+      <value name="BMS: 04" offset="6" length="2"></value>
+    </frame>
+
+    <frame id="3109">
+      <value name="BMS: 05" offset="0" length="2"></value>
+      <value name="BMS: 06" offset="2" length="2"></value>
+      <value name="BMS: 07" offset="4" length="2"></value>
+      <value name="BMS: 08" offset="6" length="2"></value>
+    </frame>
+
+    <frame id="3110">
+      <value name="BMS: 09" offset="0" length="2"></value>
+      <value name="BMS: 10" offset="2" length="2"></value>
+      <value name="BMS: 11" offset="4" length="2"></value>
+      <value name="BMS: 12" offset="6" length="2"></value>
+    </frame>
+
+    <frame id="3111">
+      <value name="BMS: 13" offset="0" length="2"></value>
+      <value name="BMS: 14" offset="2" length="2"></value>
+      <value name="BMS: 15" offset="4" length="2"></value>
+      <value name="BMS: 16" offset="6" length="2"></value>
+    </frame>
+
+    <frame id="3112">
+      <value name="BMS: 17" offset="0" length="2"></value>
+      <value name="BMS: 18" offset="2" length="2"></value>
+      <value name="BMS: 19" offset="4" length="2"></value>
+      <value name="BMS: 20" offset="6" length="2"></value>
+    </frame>
+
+    <frame id="3113">
+      <value name="BMS: 21" offset="0" length="2"></value>
+      <value name="BMS: 22" offset="2" length="2"></value>
+      <value name="BMS: 23" offset="4" length="2"></value>
+      <value name="BMS: 24" offset="6" length="2"></value>
+    </frame>
+
+    <frame id="3114">
+      <value name="BMS: 25" offset="0" length="2"></value>
+      <value name="BMS: 26" offset="2" length="2"></value>
+      <value name="BMS: 27" offset="4" length="2"></value>
+      <value name="BMS: 28" offset="6" length="2"></value>
+    </frame>
+
+    <frame id="3115">
+      <value name="BMS: 29" offset="0" length="2"></value>
+      <value name="BMS: 30" offset="2" length="2"></value>
+      <value name="BMS: 31" offset="4" length="2"></value>
+      <value name="BMS: 32" offset="6" length="2"></value>
+    </frame>
+
+    <frame id="3116">
+      <value name="BMS: 33" offset="0" length="2"></value>
+      <value name="BMS: 34" offset="2" length="2"></value>
+      <value name="BMS: 35" offset="4" length="2"></value>
+      <value name="BMS: 36" offset="6" length="2"></value>
+    </frame>
 
 
       <frame id="3200">

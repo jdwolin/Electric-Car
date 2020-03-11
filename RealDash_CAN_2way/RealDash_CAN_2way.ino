@@ -44,6 +44,8 @@ float bmssetting,setchargervoltshv, setchargervoltslv, setchargerampshv, setchar
 float CellVoltage, TotalPackVoltage = 0, batteryamps = 0, minvoltage = 0, maxvoltage = 0, deltavoltage = 0; // for sending cell voltages to mothership
 float TempPack[15] = {0};
 float CellVoltages[40] = {3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2,3.2};
+int CellState[40] = {0};
+char bmslights[40] = {0};
 char input;   //maybe uneeded?
 unsigned int priority = 0;
 unsigned int rpm = 0;
@@ -70,7 +72,9 @@ void setup()
 delay(5000);
 M5.begin();
 Serial.begin(115200); 
-pinMode(26, INPUT);
+pinMode(26, INPUT);  //
+pinMode(25, OUTPUT);  // set speaker pin so it doesn't squawk
+
 timer.setInterval(10000, setbmslevel);
 timer.setInterval(5000, keepme);
 timer.setInterval(5000, gettemperatures);
@@ -79,12 +83,12 @@ timer.setInterval(5000, gettemperatures);
   EEPROM.begin(512);  // reset eeprom stored values.
     delay(10);
 //    EEPROM.put(0, 3500); //bms 
-//    EEPROM.put(10, 1); //charger on/off
+    EEPROM.put(10, 1); //charger on/off
     EEPROM.put(20, 16); // pack current
 //    EEPROM.put(30, 5);  // 12v current
 //    EEPROM.put(40, 1);  // fan on/off
 //    EEPROM.put(50, 80);  // fan set temp
-//    EEPROM.put(60, 1);  // reset
+    EEPROM.put(60, 1);  // reset
 //    EEPROM.put(70, 144);  // extra
     EEPROM.commit();  
     yield();
@@ -125,7 +129,7 @@ Serial.println("CAN BUS Shield init ok!");
     Serial.println("Bluetooth initialized");
   }
 
- 
+
 }
 
 void loop()
@@ -137,8 +141,10 @@ timer.run();
 
 
 if (ButtonOutput[7]==1){  // if BMS Turned on.
-if (millis() - celltimer >= 1000) {  // time to update cell voltages
+if (millis() - celltimer >= 2000) {  // time to update cell voltages
           celltimer = millis();
+
+
 cellpacket = 1;
 }
 }
@@ -150,16 +156,12 @@ readcharger();
 chargepacket = 1;
 }
 }
-  // just some dummy values for simulated engine parameters
+  // keepalive swish bar
 
 if (tps++ > 1000)
 {
 tps = 0;
 }
-//if (clt++ > 230)
-//{
-//clt = 0;
-//}
 }
 
 
@@ -334,6 +336,25 @@ int nvoltage = (int) maxvoltage;
   M5.Lcd.print("V: ");
   M5.Lcd.fillRect(100, 10, 200, 30, TFT_BLACK);
   M5.Lcd.print(voltage/10);
+
+framepacket = 3108; 
+RequestBMSState();
+for (int i = 1; i < 37; i = i + 4) {
+
+
+      int light1 = (char) bmslights[i];
+      int light2 = (char) bmslights[i+1];
+      int light3 = (char) bmslights[i+2];
+      int light4 = (char) bmslights[i+3];      
+      memcpy(buf, & light1, 2);
+      Serial.print("bmslight: ");
+      Serial.println(light1);
+      memcpy(buf + 2, & light2, 2);
+      memcpy(buf + 4, & light3, 2);
+      memcpy(buf + 6, & light4, 2);
+      SendCANFrameToSerial(framepacket, buf);
+      framepacket++;
+}
 
   cellpacket = 0;
 }
@@ -717,6 +738,32 @@ if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, re
 
 }
 
+//***********************************************************************
+void RequestBMSState(){
+unsigned int c;
+
+int i;
+    Wire.beginTransmission(SLAVE_ADDRESS);
+    Wire.write("BS ");
+    Wire.write("\r");       // terminate with carriage return delimiter. This is what I will look for when parsing.
+    Wire.endTransmission();
+    delay(400);//allow time for bms to get new voltage data
+    Wire.requestFrom(SLAVE_ADDRESS,38); // now request some data, up to 8 characters
+    i=0;
+    while (Wire.available()) { // counts down the REQUESTED character count
+      c = Wire.read();         // get character
+ //   Serial.println(c, HEX);// print the character
+      if(c==255) break;        // still needed, break if default char is detected
+       bmslights[i++] = c;       // build character string
+    }  
+
+    bmslights[i]=0;      // add the NULL character for string conversion to float
+    Serial.print("BMS RETURNS: ");
+    Serial.println(bmslights);
+    return;           // return float value
+}
+
+
 
 //***********************************************************************
 float RequestVoltage (int CellNumber){
@@ -746,6 +793,8 @@ int i;
     f=atof(MyString);   // convert string to float
     return f;           // return float value
 }
+
+
 
 void gettemperatures(){
 // start another cycle if >400 milliseconds have gone by...
