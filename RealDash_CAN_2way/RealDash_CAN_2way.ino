@@ -36,7 +36,7 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 BluetoothSerial SerialBT;
 SimpleTimer timer;
-int temploop = 0;
+int temploop = 0, shutoffchargecounter = 0;
 unsigned long TemperatureTimer=0, celltimer = 0, temptimer = 0, chargetimer = 0, resettimer = 0, keepalivetimer = 0, keepalivecounter = 0, bmstimer = 0; 
 int cellpacket = 1, buttonpacket = 1, chargepacket = 1, temppacket = 1,  bmssetpacket = 1; // timer variables
 int lastvalue; // variable for button loop
@@ -76,7 +76,7 @@ pinMode(26, INPUT);  //
 pinMode(25, OUTPUT);  // set speaker pin so it doesn't squawk
 
 timer.setInterval(10000, setbmslevel);
-timer.setInterval(5000, keepme);
+timer.setInterval(9000, keepme);
 timer.setInterval(15000, gettemperatures);
 
 
@@ -111,6 +111,8 @@ if(ButtonOutput[8]>150){   // check to make sure maxHV is not overset
 ButtonOutput[8]= 150;
 } 
 
+buttonpacket = 1;  // this will fill all values to start with
+
 Serial.println("CAN BUS Shield init");
 //canbus start setup
   canbustime = millis();
@@ -139,16 +141,9 @@ ReadIncomingSerialData();
 //UpdateAmpReading();
 timer.run();
 
-if (maxvoltage > 4120){  // safety shutoff if any cell too high!!!
-  chargepacket = 0;
-  Serial.println("Voltage too high!  Charger Turned off");
-}
-
 if (ButtonOutput[7]==1){  // if BMS Turned on.
 if (millis() - celltimer >= 2000) {  // time to update cell voltages
           celltimer = millis();
-
-
 cellpacket = 1;
 }
 }
@@ -157,13 +152,13 @@ if (ButtonOutput[2]==1){  // if charger turned on from tablet
 if (millis() - chargetimer >= 800) {   // time to update charger
   chargetimer = millis();
   chargepacket = 1;
-
-if (maxvoltage > 4120){  // safety shutoff if any cell too high!!!
+if (maxvoltage > 4190){  // safety shutoff if any cell too high!!!
   chargepacket = 0;
+  chargervoltshv = 0;
+  chargerampshv = 0;
+  ButtonOutput[2]=0;  // toggle the button
   Serial.println("Voltage too high!  Charger Turned off");
-
 }
-
 readcharger(); 
 }
 }
@@ -351,7 +346,7 @@ int nvoltage = (int) maxvoltage;
   M5.Lcd.print(voltage/10);
 
 framepacket = 3108; 
-RequestBMSState();
+RequestBMSStateBS1();
 for (int i = 1; i < 37; i = i + 4) {
 
 
@@ -685,20 +680,30 @@ if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, re
   //          Serial.print(rxBuf[i], HEX);
   //          Serial.print("\t");
         }
+        shutoffchargecounter = 0;
   //      Serial.println();
         chargervoltshv = (rxBuf[0]*256+rxBuf[1])/10.0;
         chargerampshv = (rxBuf[2]*256+rxBuf[3])/10.0;
-        Serial.print("volts=");
+  //      chargervoltslv = (rxBuf[5]*.2);
+  //      chargerampslv = (rxBuf[4]*256+rxBuf[3])/10.0;
+  //      chargertemperature = rxBuf[7]-40;
+        Serial.print("hvvolts=");
         Serial.print(chargervoltshv,1);Serial.print(" ");
         Serial.print("amps=");
         Serial.println(chargerampshv,1);Serial.print(" ");
-  //      Serial.print("status=");
-  //      Serial.println(rxBuf[4]);Serial.println();
+        Serial.print("status=");
+        Serial.println(rxBuf[4]);Serial.println();
+
+
     }
+
     rxId = rxId & 0x1fffffff;
 //      Serial.println(rxId, HEX);
     if(rxId == 0x1800e5f5)//0x18ffe5f5
     {
+
+     shutoffchargecounter++;
+
  //       Serial.println("----------------------------------");
  //        Serial.print("Get data from DCDC ID: 0x");
  //        Serial.println(rxId,HEX);
@@ -711,7 +716,8 @@ if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, re
         chargervoltslv = (rxBuf[5]*.2);
         chargerampslv = (rxBuf[4]*256+rxBuf[3])/10.0;
         chargertemperature = rxBuf[7]-40;
-
+ //       chargervoltshv = (rxBuf[0]*256+rxBuf[1])/10.0;
+ //       chargerampshv = (rxBuf[2]*256+rxBuf[3])/10.0;
 
 
    //     Serial.print("volts=");
@@ -731,33 +737,39 @@ if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, re
 
    //     Serial.print("setchargerampslv=");
    ///     Serial.print(ButtonOutput[4]);Serial.print(" ");
-   //     Serial.print("setchargerampshv=");
-   //     Serial.print(ButtonOutput[3]);Serial.print(" ");
+        Serial.print("setchargerampshv=");
+        Serial.print(setchargerampshv);Serial.print(" ");
    //     Serial.print("bmssetting=");
    //     Serial.print(ButtonOutput[1]);Serial.print(" ");
-   //     Serial.print("setchargervoltshv=");
-    //    Serial.print(ButtonOutput[8]);Serial.print(" ");
-
-
-
+        Serial.print("setchargervoltshv=");
+        Serial.print(setchargervoltshv);Serial.print(" ");
 //      Serial.print("BMS Set Voltage Calculated:");
 //      Serial.println(bmssetting);
+if(chargepacket==1){
       SendCanBGS1_Cmd(setchargervoltshv,setchargerampshv); // 140 volts, 3 amps
+}
+//  chargervoltshv = (rxBuf[0]*256+rxBuf[1])/10.0;  // is charger on?
 //      Serial.println("sending VCU command");
       SendCanVCU_Cmd(14,14);  // dc battery 14 volts, 5 amps
     }
 }
 //canbus loop code end
+Serial.print("shutoffcounter: "); Serial.println(shutoffchargecounter); Serial.println("");
+
+if(shutoffchargecounter > 120){
+  chargervoltshv = 0;
+  chargerampshv = 0;
+}
 
 }
 
 //***********************************************************************
-void RequestBMSState(){
+void RequestBMSStateBS1(){
 unsigned int c;
 
 int i;
     Wire.beginTransmission(SLAVE_ADDRESS);
-    Wire.write("BS ");
+    Wire.write("BS1 ");
     Wire.write("\r");       // terminate with carriage return delimiter. This is what I will look for when parsing.
     Wire.endTransmission();
     delay(400);//allow time for bms to get new voltage data
@@ -770,10 +782,33 @@ int i;
        bmslights[i++] = c;       // build character string
     }  
 
-    bmslights[i]=0;      // add the NULL character for string conversion to float
+
     Serial.print("BMS RETURNS: ");
     Serial.println(bmslights);
+
+i=i+1;
+    
+Wire.beginTransmission(SLAVE_ADDRESS);
+    Wire.write("BS2 ");
+    Wire.write("\r");       // terminate with carriage return delimiter. This is what I will look for when parsing.
+    Wire.endTransmission();
+    delay(400);//allow time for bms to get new voltage data
+    Wire.requestFrom(SLAVE_ADDRESS,38); // now request some data, up to 8 characters
+    while (Wire.available()) { // counts down the REQUESTED character count
+      c = Wire.read();         // get character
+ //   Serial.println(c, HEX);// print the character
+      if(c==255) break;        // still needed, break if default char is detected
+       bmslights[i++] = c;       // build character string
+    }  
+    bmslights[i]=0;      // add the NULL character for string conversion to float
+
+    Serial.print("BMS RETURNS: ");
+    Serial.println(bmslights);
+
     return;           // return float value
+
+
+
 }
 
 
@@ -844,7 +879,7 @@ void callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 void setbmslevel(){
   Serial.print("chargervoltshv: ");
   Serial.println(chargervoltshv);
-  if(chargervoltshv>100){
+  if(chargervoltshv>100 && chargervoltshv<150){
   SetBMSLimit(minvoltage*10+50);    
   }
   else{
@@ -864,4 +899,5 @@ void keepme(){
   M5.Lcd.print("K: ");
   M5.Lcd.fillRect(80, 50, 200, 75, TFT_BLACK);
   M5.Lcd.print(keepalivecounter);
+  buttonpacket = 1;
 }
