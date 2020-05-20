@@ -18,7 +18,7 @@
 //   New commands for mothership to request bms status lights. bms status commands are now BS1(cells 1 thru 18) and BS2(cell 19 thru 36).
 // 
 
-#include <SimpleTimer.h>
+#include "SimpleTimer.h"
 #include <LTC681x.h>
 
 #include <Arduino.h>
