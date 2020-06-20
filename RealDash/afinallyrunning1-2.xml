@@ -32,7 +32,7 @@
 
      <frame id="3103">
       <value name="Charger Temperature" offset="0" length="2"></value>
-      <value name="BMS Setting" offset="2" length="2"></value>
+      <value name="Keep Alive" offset="2" length="2"></value>
       <value name="Zilla Temperature" offset="4" length="2"></value>
       <value name="" offset="6" length="2"></value>
     </frame>

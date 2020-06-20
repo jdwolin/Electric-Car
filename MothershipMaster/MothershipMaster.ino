@@ -162,13 +162,14 @@ if (millis() - chargetimer >= 800) {   // time to update charger
 if (maxvoltage > 4190){  // safety shutoff if any cell too high!!!
  // chargepacket = 0;
   setchargervoltshv = 0;
+  ButtonOutput[8] = 140;
+  ButtonOutput[7] = 1;
 //  ButtonOutput[2]=0;  // toggle the button
   Serial.println("Voltage too high!  Charger Turned off");
 }
 readcharger(); 
 }
 }
-
 
 
 if (tps++ > 1000)
@@ -254,7 +255,7 @@ if(chargepacket == 1)
   SendCANFrameToSerial(3102, buf);
 
   v1 = chargertemperature;   // charger temperature
-  v2 = minvoltage;  // the actual bms setting
+  v2 = keepalivecounter;  // the actual bms setting
   v3 = v3 * 100;
   v4 = setchargervoltshv;
   voltage1 = (int) v1;
@@ -750,8 +751,16 @@ if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, re
         Serial.print(setchargervoltshv);Serial.print(" ");
 //      Serial.print("BMS Set Voltage Calculated:");
 //      Serial.println(bmssetting);
+
+
+
 if(chargepacket==1){
-      SendCanBGS1_Cmd(setchargervoltshv,setchargerampshv); // 140 volts, 3 amps
+    if(maxvoltage < 4050){
+        SendCanBGS1_Cmd(setchargervoltshv,setchargerampshv); // 140 volts, 3 amps
+    }
+    if(maxvoltage > 4050){
+        SendCanBGS1_Cmd(setchargervoltshv,1); // 140 volts, 3 amps   
+    }
 }
   if (millis() - canbustime1 >= 500) {
       canbustime1 = millis();
@@ -766,9 +775,9 @@ if(chargepacket==1){
 
 //canbus loop code end
 Serial.print("shutoffcounter: "); Serial.println(shutoffchargecounter); Serial.println("");
-if(shutoffchargecounter > 120){
+if(shutoffchargecounter > 320){
   arewecharging = 0;  // turn off BMS because we aren't charging any longer.  NO HV packet detected.
-  SetBMSLimit(42000);
+//SetBMSLimit(42000);
 }
 }
 
@@ -885,10 +894,13 @@ void callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
   }
 }
 
+
+
 void setbmslevel(){
-  if(arewecharging == 1){   // we are charging so BMS
-  Serial.println("We are charging.");
+  if(arewecharging == 1 || ButtonOutput[7] == 1){   // we are charging so BMS
+    Serial.println("We are charging or BMS button is set");
   SetBMSLimit(minvoltage*10+50);    
+
 }
 else{  // we aren't charging so stop BMSing
   Serial.println("Car not charging.");
@@ -904,7 +916,7 @@ void keepme(){
  // M5.Lcd.setTextSize(3);
 
 //  M5.Lcd.setCursor(50, 50);
-//  keepalivecounter = keepalivecounter + 1;
+  keepalivecounter = keepalivecounter + 1;
 //  M5.Lcd.print("K: ");
 //  M5.Lcd.fillRect(80, 50, 200, 75, TFT_BLACK);
 //ar  M5.Lcd.print(keepalivecounter);
