@@ -74,6 +74,8 @@ delay(5000);
 Serial.begin(115200); 
 pinMode(26, INPUT);  //
 pinMode(25, OUTPUT);  // set speaker pin so it doesn't squawk
+pinMode(5, OUTPUT);  // fan GPIO
+
 
 timer.setInterval(10000, setbmslevel);
 timer.setInterval(2000, keepme);
@@ -86,9 +88,9 @@ timer.setInterval(13000, getbmslight);
     EEPROM.put(10, 1); //charger on/off
     EEPROM.put(20, 16); // pack current
 //    EEPROM.put(30, 5);  // 12v current
-//    EEPROM.put(40, 1);  // fan on/off
+    EEPROM.put(40, 0);  // fan on/off
 //    EEPROM.put(50, 80);  // fan set temp
-    EEPROM.put(60, 1);  // reset
+    EEPROM.put(60, 0);  // reset
 //    EEPROM.put(70, 144);  // extra
     EEPROM.commit();  
     yield();
@@ -154,21 +156,34 @@ if (ButtonOutput[2]==1){  // if charger turned on from tablet
 if (millis() - chargetimer >= 800) {   // time to update charger
   chargetimer = millis();
   chargepacket = 1;
-  setchargerampslv = ButtonOutput[4];  
-  setchargerampshv = ButtonOutput[3];
-  setchargervoltshv = ButtonOutput[8];
-
 
 if (maxvoltage > 4190){  // safety shutoff if any cell too high!!!
  // chargepacket = 0;
   setchargervoltshv = 0;
-  ButtonOutput[8] = 140;
-  ButtonOutput[7] = 1;
-//  ButtonOutput[2]=0;  // toggle the button
+ // ButtonOutput[8] = 140;
+//  ButtonOutput[7] = 1;
+ // ButtonOutput[2]=0;  // toggle the button
+
   Serial.println("Voltage too high!  Charger Turned off");
+}
+else
+{
+  setchargerampslv = ButtonOutput[4];  
+  setchargerampshv = ButtonOutput[3];
+  setchargervoltshv = ButtonOutput[8];
 }
 readcharger(); 
 }
+}
+
+
+if (ButtonOutput[5]==1){
+
+digitalWrite(5, HIGH);
+
+}
+else{
+digitalWrite(5, LOW);
 }
 
 
@@ -278,13 +293,13 @@ int framepacket = 3202;
     for (int i = 1; i < 37; i = i + 4) {
       
      float v1 = RequestVoltage(i) * 1000;
-     delay(20);
+     delay(30);
      float v2 = RequestVoltage(i+1) * 1000;
-     delay(20);
+     delay(30);
      float v3 = RequestVoltage(i+2) * 1000;
-     delay(20);
+     delay(30);
      float v4 = RequestVoltage(i+3) * 1000;
-     delay(20);
+     delay(30);
      if (v1 > 1 && v1 < 5000){   // filter out stray values
      CellVoltages[i] = v1;      
      }
@@ -690,11 +705,17 @@ if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, re
   //          Serial.print(rxBuf[i], HEX);
   //          Serial.print("\t");
         }
-        shutoffchargecounter = 0;
-        arewecharging = 1;  // start BMSing because HV charger is on
+    
+        
   //      Serial.println();
         chargervoltshv = (rxBuf[0]*256+rxBuf[1])/10.0;
         chargerampshv = (rxBuf[2]*256+rxBuf[3])/10.0;
+
+if (chargervoltshv > 100){
+  shutoffchargecounter = 0;
+  arewecharging = 1;  // start BMSing because HV charger is on
+}
+
   //      chargervoltslv = (rxBuf[5]*.2);
   //      chargerampslv = (rxBuf[4]*256+rxBuf[3])/10.0;
   //      chargertemperature = rxBuf[7]-40;
@@ -755,10 +776,10 @@ if(!digitalRead(CAN0_INT))                         // If CAN0_INT pin is low, re
 
 
 if(chargepacket==1){
-    if(maxvoltage < 4050){
+    if(maxvoltage < 4150){
         SendCanBGS1_Cmd(setchargervoltshv,setchargerampshv); // 140 volts, 3 amps
     }
-    if(maxvoltage > 4050){
+    if(maxvoltage > 4150){
         SendCanBGS1_Cmd(setchargervoltshv,1); // 140 volts, 3 amps   
     }
 }
@@ -804,7 +825,7 @@ int i;
     Serial.print("BMS RETURNS: ");
     Serial.println(bmslights);
 
-delay(20);
+delay(30);
 //i=i+1;
     
 Wire.beginTransmission(SLAVE_ADDRESS);
@@ -899,6 +920,7 @@ void callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 void setbmslevel(){
   if(arewecharging == 1 || ButtonOutput[7] == 1){   // we are charging so BMS
     Serial.println("We are charging or BMS button is set");
+    ButtonOutput[7] == 1;
   SetBMSLimit(minvoltage*10+50);    
 
 }
@@ -917,6 +939,9 @@ void keepme(){
 
 //  M5.Lcd.setCursor(50, 50);
   keepalivecounter = keepalivecounter + 1;
+
+
+
 //  M5.Lcd.print("K: ");
 //  M5.Lcd.fillRect(80, 50, 200, 75, TFT_BLACK);
 //ar  M5.Lcd.print(keepalivecounter);
