@@ -36,7 +36,7 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 BluetoothSerial SerialBT;
 SimpleTimer timer;
-int temploop = 0, shutoffchargecounter = 0;
+int temploop = 0, shutoffchargecounter = 0, idleflag = 0;
 unsigned long TemperatureTimer=0, celltimer = 0, temptimer = 0, chargetimer = 0, resettimer = 0, keepalivetimer = 0, keepalivecounter = 0, bmstimer = 0; 
 int cellpacket = 1, buttonpacket = 1, chargepacket = 1, temppacket = 1, arewecharging = 1, bmssetpacket = 1; // timer variables
 int lastvalue; // variable for button loop
@@ -72,7 +72,7 @@ void setup()
 delay(5000);
 //M5.begin();
 Serial.begin(115200); 
-pinMode(26, INPUT);  //
+// pinMode(26, INPUT);  //
 pinMode(25, OUTPUT);  // set speaker pin so it doesn't squawk
 pinMode(5, OUTPUT);  // fan GPIO
 
@@ -158,16 +158,20 @@ if (millis() - chargetimer >= 800) {   // time to update charger
   chargepacket = 1;
 
 if (maxvoltage > 4190){  // safety shutoff if any cell too high!!!
- // chargepacket = 0;
-  setchargervoltshv = 0;
+ idleflag++;
+ if(idleflag > 10){ // filter out stray signals by forcing the condition true 10 consecutive times.
+  chargepacket = 0;  // turn off charger
+  setchargervoltshv = 0; // set voltage to zero.
  // ButtonOutput[8] = 140;
 //  ButtonOutput[7] = 1;
- // ButtonOutput[2]=0;  // toggle the button
-
+  ButtonOutput[2]=0;  // toggle the charge button on display off
   Serial.println("Voltage too high!  Charger Turned off");
+ }
+
 }
 else
 {
+  idleflag = 0;
   setchargerampslv = ButtonOutput[4];  
   setchargerampshv = ButtonOutput[3];
   setchargervoltshv = ButtonOutput[8];
@@ -461,7 +465,7 @@ void SendCANFrameToSerial(unsigned long canFrameId, const byte* frameData)
   // the CAN frame id number
   SerialBT.write((const byte * ) & canFrameId, 4);
 
-  // CAN frame payload
+  // CAN frame payloadf
   SerialBT.write(frameData, 8);
 
 //Serial.println("Writeframe");
@@ -776,11 +780,22 @@ if (chargervoltshv > 100){
 
 
 if(chargepacket==1){
-    if(maxvoltage < 4150){
+    if(maxvoltage < 4080){
         SendCanBGS1_Cmd(setchargervoltshv,setchargerampshv); // 140 volts, 3 amps
     }
-    if(maxvoltage > 4150){
+    if(maxvoltage > 4080 && deltavoltage > 100)
+    {
+    SendCanBGS1_Cmd(setchargervoltshv,1); // 140 volts, 3 amps   
+    }
+    if(maxvoltage > 4080 && deltavoltage < 100)
+    {
+    SendCanBGS1_Cmd(setchargervoltshv,setchargerampshv); // 140 volts, 3 amps   
+    }
+    if(maxvoltage > 4180){
         SendCanBGS1_Cmd(setchargervoltshv,1); // 140 volts, 3 amps   
+    }
+    if(maxvoltage > 4200){
+        SendCanBGS1_Cmd(0,0); // 140 volts, 3 amps   
     }
 }
   if (millis() - canbustime1 >= 500) {
@@ -845,8 +860,6 @@ Wire.beginTransmission(SLAVE_ADDRESS);
     Serial.print("BMS RETURNS: ");
     Serial.println(bmslights);
     return;           // return float value
-
-
 
 }
 
@@ -921,7 +934,15 @@ void setbmslevel(){
   if(arewecharging == 1 || ButtonOutput[7] == 1){   // we are charging so BMS
     Serial.println("We are charging or BMS button is set");
     ButtonOutput[7] == 1;
-  SetBMSLimit(minvoltage*10+50);    
+
+    if (maxvoltage > 4000){ 
+    SetBMSLimit(minvoltage*10+50);    
+    }
+    else
+    {
+     Serial.println("Car not sufficiently charged to BMS");
+     SetBMSLimit(42000); 
+    }
 
 }
 else{  // we aren't charging so stop BMSing
